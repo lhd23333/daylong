@@ -990,7 +990,7 @@
     // 哪些是被钉住的、哪些是自动挑的，看下面哪颗芯片亮着就知道。
     if ($("tune-summary")) {
       if (!recipe) {
-        $("tune-summary").textContent = "音景、节拍、节奏量完全解耦，怎么搭都行";
+        $("tune-summary").textContent = "音景、节拍、节奏量、鼓点完全解耦，怎么搭都行";
       } else {
         const drivers = (window.MCParticles && window.MCParticles.DRIVERS) || [];
         const driverId = app.driver || (drivers[0] && drivers[0].id);
