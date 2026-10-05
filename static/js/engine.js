@@ -108,7 +108,9 @@
       this.recipe = null;
       this.nodes = null;
       this.barEventId = null;
-      this.nextBarAt = 0;
+      // 小节排期一律用 tick（音乐时间）刻度，理由见 scheduleNextBar 的说明。
+      this.nextBarTick = 0;
+      this.lastScheduledTick = 0;
       this.key = null;
       this.barIndex = 0;
       this.progressionIndex = 0;
@@ -238,50 +240,70 @@
       this.enter();
     }
 
+    /** 当前 BPM 下每秒多少 tick。只用来把「秒」换算成保险量，小节长度恒为 4×PPQ。 */
+    ticksPerSecond() {
+      const transport = window.Tone.getTransport();
+      return (transport.bpm.value / 60) * transport.PPQ;
+    }
+
     /**
      * 自己排每一小节，不用 Tone.Loop。
      *
-     * 起因：切几次音景之后 onBar 就不再被调用了（实测第 3 小节之后彻底静音，
+     * 起因一：切几次音景之后 onBar 就不再被调用了（实测第 3 小节之后彻底静音，
      * 且不抛异常）。Tone.Loop 内部按「回调收到的音频时间 + 构造时算出的固定
      * 秒数」自我重排，而 ToneEvent.start() 把参数当 transport 秒数用——两者
      * 不同源，位置会逐渐落到过去，于是事件被调度器丢弃。
      *
-     * 这里改成显式的：所有时间都只用一个基准（transport.seconds），推进量
-     * 按当前 BPM 现算，掉队时吸附到前方，行为和原因都看得见。
+     * 起因二（2026-10-05 定位）：改用「绝对秒数」当基准后仍有洞。schedule()
+     * 收到秒数时，Tone 用**当前 BPM** 把整段秒数一次性换算成 tick
+     * （at × bpm/60 × PPQ）；而真正决定事件何时触发的 tick 计数器，在每次
+     * BPM 被写入（换音景、拖速度都会写）时会重算原点。两个刻度从此固定错开，
+     * 事件落到错误的 tick 上——听感就是演奏中随机静默 1~5 秒再自愈。
+     *
+     * 所以现在锚点只用 tick（音乐时间）：一小节 = 4 拍 × PPQ = 768 tick，
+     * 与 BPM 无关；每次回调现取 transport.ticks 重新锚定，掉队自动吸附。
      */
     ensureLoop() {
       const transport = window.Tone.getTransport();
       if (transport.state !== "started") {
         transport.position = 0;
         transport.start("+0.04");
-        this.nextBarAt = transport.seconds + 0.25;
       }
-      // 注意：transport 已在运行时不能回头重设 nextBarAt。Transport 的
-      // 事件时间线是单调递增的（Timeline({increasing:true})），往回排会
-      // 直接抛 "The time must be greater than or equal to the last
-      // scheduled time"。切换音景时沿用原来的小节网格，新速度从下一小节
-      // 起生效——这本来也符合变速的直觉。
+      // 每次起链都重新对表，而且必须显式归零：写入 BPM 之后计数器原点会被
+      // Tone 内部重算，紧接着读到的 tick 还是旧刻度的值（实测换音景瞬间读到
+      // 的是上一个音景累计的 tick 数），拿它当锚会凭空多等十几秒。
+      // 归零由本引擎定义新原点，网格永远从「现在」重新起。
+      transport.ticks = 0;
+      this.lastScheduledTick = 0;
+      this.nextBarTick = this.ticksPerSecond() * 0.35;
       this.armed = true;
       this.scheduleNextBar();
     }
 
     scheduleNextBar() {
       if (!this.armed || !this.recipe) return;
-      const transport = window.Tone.getTransport();
-      const barSeconds = (60 / this.recipe.bpm) * 4;
+      const Tone = window.Tone;
+      const transport = Tone.getTransport();
+      const rate = this.ticksPerSecond();
       // 调度器有约 0.1 s 的 lookAhead，落在窗口内的事件会被丢掉；
       // 同时兜住任何可能的时间倒流。
-      const floor = Math.max(transport.seconds + 0.12, (this.lastScheduledAt || 0) + 0.02);
-      let at = this.nextBarAt;
-      if (!(at > floor)) at = floor;
-      this.pendingBarAt = at;
-      this.nextBarAt = at + barSeconds;
-      this.lastScheduledAt = at;
-      this.barEventId = transport.schedule((time) => {
+      const floor = Math.max(
+        transport.ticks + rate * 0.12,
+        (this.lastScheduledTick || 0) + rate * 0.02
+      );
+      const at = Math.round(Math.max(this.nextBarTick, floor));
+      this.nextBarTick = at + transport.PPQ * 4;
+      this.lastScheduledTick = at;
+      const eventId = transport.schedule((time) => {
+        // 放完立刻摘掉：schedule() 的事件不是一次性的，默认留在时间线里；
+        // tick 计数器换过原点后同一个 tick 值会被再走一遍，陈旧事件会被
+        // 二次触发（实测过，时序会乱）。
+        transport.clear(eventId);
         if (!this.armed) return;
         this.onBar(time);
         this.scheduleNextBar();
-      }, at);
+      }, new Tone.Ticks(at));
+      this.barEventId = eventId;
     }
 
     cancelBar() {
@@ -289,8 +311,6 @@
       if (this.barEventId !== undefined && this.barEventId !== null) {
         window.Tone.getTransport().clear(this.barEventId);
         this.barEventId = null;
-        // 复用刚腾出来的那个槽位重排，避免白白空掉一小节。
-        if (this.pendingBarAt != null) this.nextBarAt = this.pendingBarAt;
       }
     }
 
