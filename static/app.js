@@ -1366,10 +1366,12 @@
       .join("");
     const music = plan.music || {};
     const scape = SCAPES && typeof SCAPES.get === "function" ? SCAPES.get(music.soundscape) : null;
+    // 鼓点写成人话：none 是「不加鼓点」而不是「鼓点无」——后者读着像机器漏了字。
+    let drumsNote = "";
+    if (music.drums === "none") drumsNote = " · 不加鼓点";
+    else if (music.drums) drumsNote = ` · 鼓点${esc(drumName(music.drums))}`;
     const musicLine = scape
-      ? `听「${esc(scape.name)}」，${esc(String(music.bpm || ""))} BPM${
-          music.drums ? ` · 鼓点${esc(drumName(music.drums))}` : ""
-        }`
+      ? `听「${esc(scape.name)}」，${esc(String(music.bpm || ""))} BPM${drumsNote}`
       : "";
     if (!scape && !rows) return "";
     // 用户顺口提到的喜好单独说一句「记下了」——不然他说了「别太吵」却没看到
@@ -2075,6 +2077,10 @@
     renderScapes();
     bind();
     syncTransport();
+    // 调音面板初始就渲染：不调这一下，没播放过时「自己调这一段」四行
+    // （调性/和声进行/鼓点/粒子）全是空的，展开着的面板看起来像坏了。
+    // 无配方时走的是「自动 + 全部选项」分支，不依赖引擎已起播。
+    renderTuning();
     renderRemoteMusicHint();
 
     // 收藏不挡首屏：后端 /api/playlist 慢一点或没起来，页面也照常用。
