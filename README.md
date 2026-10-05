@@ -196,7 +196,7 @@ python server.py
 
 然后打开 <http://127.0.0.1:8000>。停止按 `Ctrl+C`，换端口用 `--port 8080`。
 
-运行测试（217 个用例，约 21 秒跑完）：
+运行测试（228 个用例，约 24 秒跑完）：
 
 ```bash
 python -m unittest discover -s tests
