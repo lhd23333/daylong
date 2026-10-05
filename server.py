@@ -23,6 +23,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from music_companion.agent import plan_day_from_text
+from music_companion import ai_settings
 from music_companion.ai_client import AIRecommender
 from music_companion.audio_generator import AudioGenerationError, generate_music_wav
 from music_companion.music_api import MusicAPIError, create_music_client
@@ -111,6 +112,10 @@ class MusicCompanionHandler(BaseHTTPRequestHandler):
             # 所以这里返回的就是几条能直接回放的小 JSON。
             self._send_json(200, {"items": self.server.playlist.list_entries()})
             return
+        if parsed.path == "/api/ai-settings":
+            # 设置现状。**只回尾 4 位提示**，完整 Key 永不出服务端。
+            self._send_json(200, self.server.describe_ai_settings())
+            return
         self._serve_static(parsed.path)
 
     def do_POST(self) -> None:
@@ -135,6 +140,9 @@ class MusicCompanionHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/playlist":
             self._handle_playlist_add()
+            return
+        if parsed.path == "/api/ai-settings":
+            self._handle_ai_settings_save()
             return
         if parsed.path != "/api/recommend":
             self._send_json(404, {"error": "接口不存在"})
@@ -165,6 +173,10 @@ class MusicCompanionHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         prefix = "/api/calendar/events/"
         playlist_prefix = "/api/playlist/"
+        if parsed.path == "/api/ai-settings":
+            self.server.clear_ai_settings()
+            self._send_json(200, self.server.describe_ai_settings())
+            return
         if parsed.path.startswith(playlist_prefix):
             entry_id = unquote(parsed.path[len(playlist_prefix):])
             if not entry_id or self.server.playlist.remove(entry_id) is False:
@@ -205,6 +217,23 @@ class MusicCompanionHandler(BaseHTTPRequestHandler):
             self._send_json(500, {"error": f"服务器内部错误：{type(exc).__name__}"})
             return
         self._send_json(201 if created else 200, {"item": entry, "duplicate": not created})
+
+    def _handle_ai_settings_save(self) -> None:
+        """保存 AI 通道设置：写完立刻重建客户端，不用重启服务。
+
+        只提交用户实际填了的字段：缺席 = 保持、空串 = 清除（见 ai_settings.save）。
+        Key 只进不回：响应里最多出现尾 4 位提示。
+        """
+        try:
+            payload = self._read_json_body()
+            state = self.server.save_ai_settings(payload)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+            return
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            self._send_json(400, {"error": f"JSON 格式错误：{exc}"})
+            return
+        self._send_json(200, state)
 
     def _content_length(self) -> int:
         raw_length = self.headers.get("Content-Length", "")
@@ -620,15 +649,11 @@ class MusicCompanionHandler(BaseHTTPRequestHandler):
 class MusicCompanionServer(ThreadingHTTPServer):
     def __init__(self, address: tuple[str, int], data_dir: str | Path | None = None) -> None:
         super().__init__(address, MusicCompanionHandler)
-        self.ai_client = AIRecommender()
-        # 远端音乐通路按 MUSIC_PROVIDER 选（elevenlabs / tempolor）。选不出来
-        # 不该拦住整个服务：本地合成器才是主线，远端只是可选加成。
-        try:
-            self.music_client = create_music_client()
-        except Exception as exc:  # noqa: BLE001 - 配置错误不该让服务起不来
-            print(f"[server] 远端音乐通路未启用：{exc}")
-            self.music_client = None
         self.data_dir = Path(data_dir) if data_dir is not None else DATA_DIR
+        self.ai_settings_path = self.data_dir / ai_settings.SETTINGS_FILENAME
+        # 客户端按「设置文件优先、.env 兜底」构造；保存设置时走 _build_clients
+        # 热重建，/api/health 的 mode 与远端通路随之立即翻转，不用重启服务。
+        self._build_clients()
         self.events_path = self.data_dir / "calendar_events.json"
         self.state_path = self.data_dir / "latest_state.json"
         self.plans_path = self.data_dir / "plans.json"
@@ -658,6 +683,76 @@ class MusicCompanionServer(ThreadingHTTPServer):
             str(plan_id): str(value.get("status") or "planned")
             for plan_id, value in self.plan_records.items()
             if isinstance(value, dict)
+        }
+
+    def _build_clients(self) -> None:
+        """（重）建两个远端客户端。启动时和保存设置后各调一次。
+
+        取值顺序：设置文件 → .env → 内置默认。设置里清掉的字段读到的是空串，
+        ``or None`` 把它折回 .env 的行为——「清除即恢复 .env」就是在这里兑现的。
+        热替换是整对象赋引用，另行线程要么看到旧客户端要么看到新的，不会读到半截。
+        """
+        settings = ai_settings.load(self.ai_settings_path)
+        chat = settings.get("chat") or {}
+        music = settings.get("music") or {}
+        self.ai_client = AIRecommender(
+            api_key=chat.get("api_key") or None,
+            base_url=chat.get("base_url") or None,
+            model=chat.get("model") or None,
+        )
+        # 远端音乐通路选不出来不该拦住整个服务：本地合成器才是主线。
+        try:
+            self.music_client = create_music_client(
+                music.get("provider") or None,
+                api_key=music.get("api_key") or None,
+                callback_url=music.get("callback_url") or None,
+            )
+        except Exception as exc:  # noqa: BLE001 - 配置错误不该让服务起不来
+            print(f"[server] 远端音乐通路未启用：{exc}")
+            self.music_client = None
+
+    def save_ai_settings(self, patch: dict) -> dict:
+        """合并保存设置并热重建客户端；返回新的脱敏描述。校验失败抛 ValueError。"""
+        ai_settings.save(self.ai_settings_path, patch)
+        self._build_clients()
+        return self.describe_ai_settings()
+
+    def clear_ai_settings(self) -> dict:
+        """删掉设置文件、回到 .env 的行为，同样立即生效。"""
+        ai_settings.clear(self.ai_settings_path)
+        self._build_clients()
+        return self.describe_ai_settings()
+
+    def describe_ai_settings(self) -> dict:
+        """给页面看的设置现状：只回尾 4 位提示与生效值，整串 Key 不出服务端。
+
+        ``source`` 描述 Key 从哪来（settings / env / none），页面据此说明
+        「来自设置」还是「来自 .env」。
+        """
+        settings = ai_settings.load(self.ai_settings_path)
+        chat_saved = str((settings.get("chat") or {}).get("api_key") or "")
+        env_chat_key = os.getenv("OPENAI_API_KEY", "").strip()
+        client = self.music_client
+        music_health = client.health() if client is not None else {"configured": False, "provider": ""}
+        music_saved = str((settings.get("music") or {}).get("api_key") or "")
+        provider = str(music_health.get("provider") or "")
+        env_music_key = os.getenv(
+            "TEMPOLOR_API_KEY" if provider == "tempolor" else "ELEVENLABS_API_KEY", ""
+        ).strip()
+        return {
+            "chat": {
+                "configured": self.ai_client.is_configured(),
+                "key_hint": ai_settings.key_hint(self.ai_client.api_key),
+                "base_url": self.ai_client.base_url,
+                "model": self.ai_client.model,
+                "source": "settings" if chat_saved else ("env" if env_chat_key else "none"),
+            },
+            "music": {
+                **music_health,
+                "key_hint": ai_settings.key_hint(getattr(client, "api_key", "")),
+                "saved_provider": str((settings.get("music") or {}).get("provider") or ""),
+                "source": "settings" if music_saved else ("env" if env_music_key else "none"),
+            },
         }
 
     def persist_events(self) -> None:

@@ -211,6 +211,17 @@ python -m unittest discover -s tests
 互不相干的增强通道——**文本通道改措辞，远端音频通道换声音**，各配各的，坏一个不影响
 另一个。
 
+密钥有两种填法，效果完全一样：
+
+1. **页面上填（推荐）**：「了解你」页最下面展开「连接 AI（可选）」，填入对话和/或
+   音乐的密钥，点「保存，立即生效」——不用重启。想改就再填一次，想收回就点「清除」。
+2. 写 `.env` 文件（见下面的示例），适合部署或想把配置统一放在环境变量里的场合。
+
+页面上填的值存在本机 `data/ai_settings.json`，与 `.env` 的关系是**设置优先、`.env`
+兜底**：同一字段两边都有时用页面上的；页面上清除后就回到 `.env`。读接口只回显密钥的
+**尾 4 位**做提示，完整 Key 不会再回到页面。两个文件都不进版本控制、不随作品提交
+（打包脚本显式排除整个 `data/` 与 `.env`）。
+
 「对话」页的理解同样有两条通道：**配了密钥时走模型，没配时走本地规则，两条通道同一个
 输出结构**。模型通道只被要求输出 `HH:MM` 这种时刻，时区与 ISO8601 由 Python 拼；返回后
 逐字段校验，不合法的字段单独退回本地值。模型没配、超时、报错或返回不合规，一律退回
@@ -281,8 +292,9 @@ TEMPOLOR_POLL_TIMEOUT=180
 python tools/test_api.py
 ```
 
-**密钥只放在本机 `.env` 里，不要写进前端、截图或提交材料。** `.env` 已在
-`.gitignore` 中，`.env.example` 里只有字段名。
+**密钥只放在本机（`.env` 或页面上填的 `data/ai_settings.json`），不要写进前端代码、
+截图或提交材料。** 两者都在 `.gitignore` 中，`.env.example` 里只有字段名，`data/`
+目录不随提交包发出（打包脚本显式排除）。页面上最多只回显密钥尾 4 位。
 
 ## 项目结构
 
@@ -302,6 +314,7 @@ python tools/test_api.py
 │   ├── gait.py                   # 单步长度与步频公式（供 recommender 使用）
 │   ├── audio_generator.py        # 标准库合成 WAV 循环（AI 音频的兜底）
 │   ├── ai_client.py              # 可选 OpenAI 兼容文本接口
+│   ├── ai_settings.py            # 页面上填的 AI 设置：本机存储、校验、尾 4 位脱敏
 │   ├── music_api.py              # ElevenLabs / 天谱乐远端客户端（MUSIC_PROVIDER 选择）
 │   └── playlist.py               # 收藏的配方：uuid5 id、校验、落盘 data/playlist.json
 ├── static/
@@ -317,7 +330,7 @@ python tools/test_api.py
 │   ├── js/daymusic.js            # 日程 → 旋律（纯逻辑）与提前提醒调度
 │   ├── js/dayqueue.js            # 整天节目单：事件音乐 + 休息音景串成连播（纯逻辑）
 │   └── vendor/tone/              # Tone.js 15.1.22（MIT，随包提供）
-├── tests/                        # 单元测试（217 个用例）
+├── tests/                        # 单元测试（228 个用例）
 ├── tools/test_api.py             # AI 接口连通性诊断
 ├── docs/                         # 设计与实施计划（历史记录）
 ├── data/                         # 本机数据目录（收藏配方等，已在 .gitignore 里）
@@ -339,6 +352,9 @@ python tools/test_api.py
 | GET | `/api/calendar/events` | 日程列表，支持 `?date=YYYY-MM-DD` |
 | GET | `/api/state/latest` | 最近一次状态快照 |
 | GET | `/api/health` | 模式与能力探测，含远端音乐通路的配置状态 `remote_music` |
+| GET | `/api/ai-settings` | 「连接 AI」设置现状：生效值与密钥**尾 4 位**提示（完整 Key 不出服务端） |
+| POST | `/api/ai-settings` | 保存页面填的密钥并**立即生效**（热重建客户端，不重启）；字段缺席=保持、空串=清除 |
+| DELETE | `/api/ai-settings` | 清除页面填的设置，回到 `.env` 的行为 |
 | POST | `/api/agent` | 对话入口：把一段话读成日程与音乐。**接口本身只读**，不写入任何状态；退回本地规则时在 `fallback_reason` 里说明 |
 | POST | `/api/day` | **主接口**：编排一整天，返回 timeline / stats / care |
 | POST | `/api/day/break-status` | 标记某个休息点为 started / done / planned |

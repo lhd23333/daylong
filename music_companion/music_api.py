@@ -518,15 +518,22 @@ def _env_float(explicit: float | None, name: str, default: float) -> float:
     return value if math.isfinite(value) and value > 0 else default
 
 
-def create_music_client(provider: str | None = None):
+def create_music_client(
+    provider: str | None = None,
+    api_key: str | None = None,
+    callback_url: str | None = None,
+):
     """按 ``MUSIC_PROVIDER`` 选一个远端音乐客户端。
 
     默认 ``elevenlabs``：它一次请求就返回音频，链路最短，出事的地方最少。
     ``tempolor`` 是给「必须中国大陆直连」的场合准备的备选。
+
+    ``api_key`` / ``callback_url`` 只有来源是页面上的「连接 AI」设置时才传
+    （见 server 的 ``_build_clients``）；不传（None）时客户端照旧回退 .env。
     """
     name = (provider or os.getenv("MUSIC_PROVIDER") or "elevenlabs").strip().lower()
     if name in {"tempolor", "tianpuyue", "天谱乐"}:
-        return TemPolorMusicClient()
+        return TemPolorMusicClient(api_key=api_key, callback_url=callback_url)
     if name in {"elevenlabs", "11labs"}:
-        return ElevenLabsMusicClient()
+        return ElevenLabsMusicClient(api_key=api_key)
     raise MusicAPIError(f"未知的 MUSIC_PROVIDER：{name}（可选 elevenlabs / tempolor）")

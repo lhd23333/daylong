@@ -1778,6 +1778,39 @@
       }
     });
 
+    // 了解你：连接 AI（可选）。保存后服务端热重建客户端，不重启就生效。
+    $("ai-save-btn").addEventListener("click", async () => {
+      const button = $("ai-save-btn");
+      button.disabled = true;
+      try {
+        renderAISettings(
+          await api("/api/ai-settings", { method: "POST", body: collectAISettings() })
+        );
+        clearAIInputs();
+        $("ai-save-hint").textContent = "已保存，立即生效";
+        window.setTimeout(() => {
+          $("ai-save-hint").textContent = "";
+        }, 2400);
+      } catch (error) {
+        toast(error.message);
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    $("ai-clear-btn").addEventListener("click", async () => {
+      if (!window.confirm("会清掉在这里填过的 Key，回到 .env 的配置。确定吗？")) return;
+      try {
+        renderAISettings(await api("/api/ai-settings", { method: "DELETE" }));
+        clearAIInputs();
+        toast("已清除，回到 .env 的配置");
+      } catch (error) {
+        toast(error.message);
+      }
+    });
+
+    $("ai-music-provider").addEventListener("change", syncMusicCallbackField);
+
     // 休息：播放 / 暂停 / 换一段
     $("play-btn").addEventListener("click", async () => {
       if (!engine) return;
@@ -1920,12 +1953,14 @@
 
     // 清除
     $("clear-all-btn").addEventListener("click", async () => {
-      if (!window.confirm("会删掉本机保存的日程、状态和偏好，确定吗？")) return;
+      if (!window.confirm("会删掉本机保存的日程、状态、偏好和填过的 AI Key，确定吗？")) return;
       try {
         window.localStorage.removeItem(STORE_KEY);
         for (const item of app.events) {
           await api(`/api/calendar/events/${encodeURIComponent(item.id)}`, { method: "DELETE" });
         }
+        // 填过的 AI Key 也算本机数据：一键清干净，借电脑演示前不用逐个回想。
+        await api("/api/ai-settings", { method: "DELETE" });
         window.location.reload();
       } catch (error) {
         toast(error.message);
@@ -2065,7 +2100,85 @@
     box.textContent = remote.configured
       ? `远端通路已配置（${remote.provider || "未知"}）：按下生成会调用它，失败时自动回落本地。`
       : "远端通路还没配（可选）：现在按下生成会直接用本地合成器现场生成一段，不联网。" +
-        "想换成真·AI 生成的音频，见项目根目录的 .env.example。";
+        "想换成真·AI 生成的音频，去「了解你」页面的「连接 AI」里填一个 Key 就行。";
+  }
+
+  // ── 连接 AI（可选）─────────────────────────────────────────
+  // 设置存服务端（data/ai_settings.json），前端只拿脱敏描述：完整 Key 从不
+  // 回页面。输入框永远空着——留空 = 不改动，placeholder 展示当前生效值。
+
+  const AI_INPUT_IDS = [
+    "ai-chat-key",
+    "ai-chat-base",
+    "ai-chat-model",
+    "ai-music-key",
+    "ai-music-callback",
+  ];
+
+  function syncMusicCallbackField() {
+    // callback 只有天谱乐要（它的提交接口把它列为必填），别家不显示。
+    $("ai-music-callback-field").hidden = $("ai-music-provider").value !== "tempolor";
+  }
+
+  function renderAISettings(state) {
+    const box = $("ai-panel-state");
+    if (!box) return;
+    if (!state) {
+      box.textContent = "设置接口读不到（服务端没起来？）。";
+      return;
+    }
+    const chat = state.chat || {};
+    const music = state.music || {};
+    const chatWhere = chat.source === "env" ? "，来自 .env" : "";
+    const musicWhere = music.source === "env" ? "，来自 .env" : "";
+    box.textContent = [
+      chat.configured
+        ? `对话：已连接（${chat.key_hint}${chatWhere}）`
+        : "对话：用本地规则",
+      music.configured
+        ? `远端音乐：已连接（${music.provider || "未知"} ${music.key_hint}${musicWhere}）`
+        : "远端音乐：没连，用本地合成器",
+    ].join(" · ");
+    // 生效值进 placeholder：不填就维持现状，看着占位就知道现在用的是什么。
+    $("ai-chat-base").placeholder = chat.base_url || "https://api.openai.com/v1";
+    $("ai-chat-model").placeholder = chat.model || "gpt-4o-mini";
+    $("ai-music-provider").value = music.saved_provider || "";
+    $("ai-music-key").placeholder = music.key_hint ? "已保存，留空不改动" : "留空不改动";
+    syncMusicCallbackField();
+  }
+
+  async function loadAISettings() {
+    try {
+      renderAISettings(await api("/api/ai-settings"));
+    } catch {
+      renderAISettings(null);
+    }
+  }
+
+  function collectAISettings() {
+    // 只提交用户实际填了的字段：缺席 = 保持（后端语义，见 ai_settings.save）。
+    // provider 例外——它是下拉框，当前值就是用户的意图，总是提交。
+    const payload = { music: { provider: $("ai-music-provider").value } };
+    const chat = {};
+    for (const [key, id] of [
+      ["api_key", "ai-chat-key"],
+      ["base_url", "ai-chat-base"],
+      ["model", "ai-chat-model"],
+    ]) {
+      const value = $(id).value.trim();
+      if (value) chat[key] = value;
+    }
+    if (Object.keys(chat).length) payload.chat = chat;
+    const musicKey = $("ai-music-key").value.trim();
+    if (musicKey) payload.music.api_key = musicKey;
+    const callback = $("ai-music-callback").value.trim();
+    if (callback) payload.music.callback_url = callback;
+    return payload;
+  }
+
+  function clearAIInputs() {
+    // 存进去的 Key 不该继续停在页面上。
+    for (const id of AI_INPUT_IDS) $(id).value = "";
   }
 
   async function boot() {
@@ -2082,6 +2195,8 @@
     // 无配方时走的是「自动 + 全部选项」分支，不依赖引擎已起播。
     renderTuning();
     renderRemoteMusicHint();
+    // 「连接 AI」面板的状态行：本机接口，自己吞异常，不挡首屏。
+    loadAISettings();
 
     // 收藏不挡首屏：后端 /api/playlist 慢一点或没起来，页面也照常用。
     // loadFavorites 自己吞异常，这里不用 await。

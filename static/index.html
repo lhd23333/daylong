@@ -245,6 +245,67 @@
             <p class="panel-foot">不选也行——默认按状态和时段自己挑。</p>
           </section>
 
+          <!-- 连接 AI（可选）。不填也能完整使用：对话理解和音乐生成都有本地
+               兜底；填了才升级成真 AI 通道。Key 存在本机 data/ai_settings.json，
+               不进版本控制，也不随作品提交；页面上只回显尾 4 位。 -->
+          <details class="panel more" id="ai-panel">
+            <summary>
+              <span>连接 AI（可选）</span>
+              <small id="ai-panel-summary">填自己的 API Key；不填也能用本地规则</small>
+            </summary>
+            <div class="details-body">
+              <p class="panel-foot" id="ai-panel-state">正在读取当前状态…</p>
+
+              <div class="field-row">
+                <label class="field" for="ai-chat-key">
+                  <span class="field-name">对话 API Key</span>
+                  <span class="field-input"><input type="password" id="ai-chat-key" placeholder="留空不改动" autocomplete="off" spellcheck="false" /></span>
+                </label>
+                <label class="field" for="ai-chat-model">
+                  <span class="field-name">模型名</span>
+                  <span class="field-input"><input type="text" id="ai-chat-model" placeholder="gpt-4o-mini" autocomplete="off" spellcheck="false" /></span>
+                </label>
+              </div>
+
+              <div class="field-row">
+                <label class="field" for="ai-chat-base">
+                  <span class="field-name">接口地址</span>
+                  <span class="field-input"><input type="text" id="ai-chat-base" placeholder="https://api.openai.com/v1" autocomplete="off" spellcheck="false" /></span>
+                </label>
+                <label class="field" for="ai-music-provider">
+                  <span class="field-name">远端音乐生成</span>
+                  <span class="field-input"><select id="ai-music-provider">
+                    <option value="">不启用 / 跟随 .env</option>
+                    <option value="elevenlabs">ElevenLabs</option>
+                    <option value="tempolor">天谱乐 TemPolor</option>
+                  </select></span>
+                </label>
+              </div>
+
+              <div class="field-row">
+                <label class="field" for="ai-music-key">
+                  <span class="field-name">音乐 API Key</span>
+                  <span class="field-input"><input type="password" id="ai-music-key" placeholder="留空不改动" autocomplete="off" spellcheck="false" /></span>
+                </label>
+                <label class="field" for="ai-music-callback" id="ai-music-callback-field" hidden>
+                  <span class="field-name">callback 地址（天谱乐）</span>
+                  <span class="field-input"><input type="text" id="ai-music-callback" placeholder="https://example.com/callback" autocomplete="off" spellcheck="false" /></span>
+                </label>
+              </div>
+
+              <div class="ai-actions">
+                <button type="button" class="solid-btn" id="ai-save-btn"><span>保存，立即生效</span></button>
+                <button type="button" class="ghost-btn" id="ai-clear-btn"><span>清除</span></button>
+                <span class="save-hint" id="ai-save-hint" role="status"></span>
+              </div>
+              <p class="panel-foot">
+                Key 只保存在这台电脑上，不进版本控制，也不随作品提交；页面上只回显尾 4 位。
+                聊天接口按 OpenAI 兼容格式调用，填别家的地址和模型名也能用（例如 MiniMax）。
+                输入框留空表示「不改动」；想彻底清掉在这里填过的值，点「清除」。
+              </p>
+            </div>
+          </details>
+
           <div class="sticky-actions">
             <button type="button" class="solid-btn wide" id="save-profile-btn">
               <span>保存，重排今天</span>

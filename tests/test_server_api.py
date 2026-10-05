@@ -132,7 +132,13 @@ class ServerApiTests(unittest.TestCase):
             'now': '2026-10-05T14:07:00+08:00',
         }, timeout=15)
         self.assertEqual(status, 200)
-        self.assertEqual([item['title'] for item in body['events']], ['数学课', '操场跑'])
+        # 标题用「包含」而不是逐字相等：这条链路里 AI 可以自由措辞
+        # （实测「操场跑」会被写成「操场跑步」），要断言的是「两件事都被
+        # 识别出来、结构能写回」，不是复刻模型这次恰好用的字。
+        titles = [item['title'] for item in body['events']]
+        self.assertEqual(len(titles), 2)
+        self.assertIn('数学', titles[0])
+        self.assertIn('跑', titles[1])
         self.assertEqual(body['music']['soundscape'], 'run')
         self.assertIn('reply', body)
         for item in body['events']:
@@ -148,6 +154,48 @@ class ServerApiTests(unittest.TestCase):
         status, body = self.req('POST', '/api/agent', {'text': '   '})
         self.assertEqual(status, 400)
         self.assertIn('error', body)
+
+    def test_ai_settings_save_hides_key_and_hot_reloads(self):
+        # 页面填 Key 的链路：保存 → 客户端热重建（/api/health 立刻翻转）→
+        # 响应里只回尾 4 位。这里用的是假 Key，只验证链路本身。
+        fake_key = "sk-test-abcd1234"
+        try:
+            status, body = self.req('POST', '/api/ai-settings', {
+                'chat': {
+                    'api_key': fake_key,
+                    'base_url': 'https://api.example.com/v1',
+                    'model': 'test-model',
+                },
+            })
+            self.assertEqual(status, 200)
+            self.assertTrue(body['chat']['configured'])
+            self.assertEqual(body['chat']['source'], 'settings')
+            self.assertEqual(body['chat']['key_hint'], '…1234')
+            self.assertEqual(body['chat']['base_url'], 'https://api.example.com/v1')
+            self.assertEqual(body['chat']['model'], 'test-model')
+            # 完整 Key 绝不出现在任何响应里。
+            self.assertNotIn(fake_key, json.dumps(body, ensure_ascii=False))
+            status, health = self.req('GET', '/api/health')
+            self.assertEqual(health['mode'], 'ai')
+            # 设置落在本用例的临时 data_dir，不碰真实 data/。
+            self.assertTrue((Path(self.data_dir.name) / 'ai_settings.json').exists())
+            # 再 GET 一次，读数与保存响应一致（没有只活在内存里的假象）。
+            status, again = self.req('GET', '/api/ai-settings')
+            self.assertEqual(again['chat'], body['chat'])
+        finally:
+            # 同一个 server 实例被整个文件共用，清干净再还给后面的用例。
+            status, cleared = self.req('DELETE', '/api/ai-settings')
+            self.assertEqual(status, 200)
+        self.assertNotEqual(cleared['chat']['source'], 'settings')
+        self.assertFalse((Path(self.data_dir.name) / 'ai_settings.json').exists())
+
+    def test_ai_settings_rejects_bad_values_with_400(self):
+        status, body = self.req('POST', '/api/ai-settings', {'chat': {'base_url': 'ftp://bad'}})
+        self.assertEqual(status, 400)
+        self.assertIn('http', body['error'])
+        status, body = self.req('POST', '/api/ai-settings', {'music': {'provider': 'spotify'}})
+        self.assertEqual(status, 400)
+        self.assertIn('服务商', body['error'])
 
     def test_malformed_content_length_returns_json_400(self):
         from http.client import HTTPConnection

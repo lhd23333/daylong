@@ -41,7 +41,7 @@ node --check static\js\features.js
 node --check static\js\particles.js
 ```
 
-**通过标准：** unittest 全部 `OK`（当前 217 个用例，约 21 秒）；`py_compile` 退出码 0；
+**通过标准：** unittest 全部 `OK`（当前 228 个用例，约 24 秒）；`py_compile` 退出码 0；
 `node --check` 无输出且退出码 0。
 
 > ⚠️ 测试命令**不要**加 `-t .`。`tests/` 没有 `__init__.py`，加了会报
@@ -201,6 +201,24 @@ curl.exe -X DELETE http://127.0.0.1:8000/api/playlist/<上一步返回的 id>
 
 ## J. AI 通道与回退
 
+### J1. 在页面上填密钥（「连接 AI」面板）
+
+- [ ] 「了解你」页最下面有「连接 AI（可选）」折叠面板；展开后状态行写清两条通道
+      （对话 / 远端音乐）**已连接还是没连**，没连时说明用的是本地规则 / 本地合成器。
+- [ ] 填入对话 API Key 点「保存，立即生效」：状态行变为「已连接（…尾 4 位）」，
+      输入框清空；刷新页面后仍是已连接（设置落在本机 `data/ai_settings.json`）。
+- [ ] 保存后不用重启服务，`/api/health` 的 `mode` 立即变为 `ai`。
+- [ ] 接口与页面都**只回显尾 4 位**：`GET /api/ai-settings` 的响应里搜不到完整 Key。
+- [ ] 「远端音乐生成」下拉选「天谱乐 TemPolor」：出现 callback 地址输入框（只有它
+      需要）；填 key + callback 保存后状态行显示「远端音乐：已连接（tempolor …尾 4 位）」。
+- [ ] 填一个不合法的接口地址（如 `ftp://x`）保存：明确报错「需要以 http:// 或
+      https:// 开头」，**不写入**，原设置不受影响。
+- [ ] 点「清除」：回到 `.env` 的行为（状态行如实显示「来自 .env」或「没连」），
+      `data/ai_settings.json` 被删除。
+- [ ] 页脚「清除全部数据」连填过的 AI Key 一起清掉（确认框文案里有提到）。
+
+### J2. 环境变量与回退
+
 - [ ] 未配置任何密钥时：`/api/health` 返回 `{"ok": true, "mode": "local", ...}`，
       关怀语正常显示、音乐正常播放。
 - [ ] 未配置任何密钥时，在「对话」页说一句今天怎么过：仍会给出排好的日程与音乐
@@ -230,6 +248,7 @@ curl.exe -X DELETE http://127.0.0.1:8000/api/playlist/<上一步返回的 id>
 ```powershell
 curl.exe http://127.0.0.1:8000/api/health
 curl.exe http://127.0.0.1:8000/api/soundscapes
+curl.exe http://127.0.0.1:8000/api/ai-settings
 curl.exe -X POST http://127.0.0.1:8000/api/agent -H "Content-Type: application/json" -d "{\"text\":\"上午数学课，下午四点半去操场跑半小时\",\"now\":\"2026-10-05T09:40:00+08:00\"}"
 curl.exe -X POST http://127.0.0.1:8000/api/calendar/events -H "Content-Type: application/json" -d "{\"id\":\"demo\",\"title\":\"学习\",\"start\":\"2026-10-05T09:00:00+08:00\",\"end\":\"2026-10-05T10:40:00+08:00\",\"category\":\"study\"}"
 curl.exe -X POST http://127.0.0.1:8000/api/day -H "Content-Type: application/json" -d "{\"now\":\"2026-10-05T09:40:00+08:00\",\"day_start\":\"2026-10-05T06:00:00+08:00\",\"day_end\":\"2026-10-05T23:59:00+08:00\"}"
@@ -254,7 +273,7 @@ curl.exe -X POST http://127.0.0.1:8000/api/day -H "Content-Type: application/jso
 - 验收人：
 - Windows / Python 版本：
 - 一键启动：通过 / 未通过
-- 自动化测试（217 项）：通过 / 未通过
+- 自动化测试（228 项）：通过 / 未通过
 - 录入与导入：通过 / 未通过
 - 编排与休息点：通过 / 未通过
 - 音乐生成与可视化：通过 / 未通过

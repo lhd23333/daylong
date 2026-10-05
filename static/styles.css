@@ -1425,6 +1425,30 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   margin-top: 0.8rem;
 }
 
+/* ── 连接 AI ─────────────────────────────────────────── */
+
+/* 下拉框进 .field-input 的壳：边框和焦点环由壳负责，select 本身裸着。 */
+.field-input select {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: none;
+  outline: none;
+}
+
+.ai-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin-top: 1.1rem;
+}
+
+/* .field 的 display:flex 会压掉 hidden 属性的 UA 默认样式，得显式让位
+   （和 .route-bar[hidden] 同一个坑）。 */
+.field[hidden] {
+  display: none;
+}
+
 /* ── 页脚 / 提示 ──────────────────────────────────────── */
 
 .footer {
