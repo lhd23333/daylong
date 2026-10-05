@@ -12,6 +12,9 @@
  * 四条规则统一用直角坐标：规则只负责写 p.ax / p.ay / p.drag，积分与渲染共用。
  * 统一之后「换规则」就退化成两组力的加权混合，所以能做到平滑过渡而不是清屏重来。
  *
+ * 粒子活动范围由一块「领地」（遮罩）圈定，默认对齐光碟、避开文字，见 DEFAULT_MASK。
+ * 四套观感共用同一个游戏场——如果每条规则各自决定铺多大，换规则时画面会跳。
+ *
  * 所有随机都走带种子的 mulberry32：同一个种子得到同一套初始分布，方便复现和写
  * 测试。注意时间积分用的是真实帧间隔（见 frame()），所以「同一帧序列」才可复现，
  * 而不是「同一次点击」——真实时间不能拿固定步长糊弄，否则帧率一变速度就变。
@@ -57,6 +60,23 @@
     glow: 0.05, // 圆心处极淡的暖色辉光，把粒子和光碟绑成一组（0 = 不画）
   });
 
+  // ── 单颗粒子的画法 ──────────────────────────────────────
+  //
+  // 硬边的圆点在 2 倍屏上就是一颗颗小圆珠，凑近看像撒在纸上的胡椒——「屏幕脏了」
+  // 有一半是这么来的。所以每颗粒子不是 arc + fill，而是把一颗预先烘焙好的柔边
+  // 光点贴上去：中心接近实心、边缘一圈极淡的光晕，读起来是尘埃而不是色块。
+  //
+  // 这笔观感是花钱买的，如实记账：headless 软件光栅下 600 颗粒子、658×720 画布，
+  // 每帧 arc+fill 约 0.1 ms，改贴图后 1.0–1.6 ms（贴图要过一次重采样）。默认 300
+  // 颗粒子约 0.5–0.8 ms，占 60 fps 预算的 3%–5%，换来的是凑近看不露怯——
+  // 这里选观感。真要在低端机上省这一笔，把本文件的 draw() 换回 arc 即可。
+  //
+  // 贴图边长取「粒子直径 × 这个倍数」，光晕因此比实心部分大一圈；倍数太小就
+  // 退化成硬边圆点，太大整片会糊成雾。边长本身对成本不敏感（6..32 px 实测
+  // 都在同一档），所以取中间值兼顾缩放的平滑度。
+  const SPRITE_SIZE = 24;
+  const SPRITE_SCALE = 2.8;
+
   // 谱心（Hz）→ 0..1「亮暗」的对数映射区间。用对数是因为音高的听感是对数的。
   const BRIGHT_LOW = 120;
   const BRIGHT_HIGH = 1620;
@@ -74,8 +94,10 @@
         min: 30,
         max: MAX_PARTICLES,
         step: 10,
-        default: 240,
-        hint: "调大画面更厚实；太高会盖住内容，也更吃性能",
+        // 默认值是按「粒子只在光碟一圈活动」定的：领地比整张卡片小得多，同样
+        // 的数量落在里面会显得更密，所以比铺满全屏时给得多一些。
+        default: 300,
+        hint: "调大画面更厚实，调小更透气；粒子不会跑到文字上去，放心拉",
       },
       {
         id: "size",
@@ -83,7 +105,9 @@
         min: 0.4,
         max: 4,
         step: 0.1,
-        default: 1.6,
+        // 默认偏「有重量」而不是「极细」：1 px 级的点在浅色底上接近临界可见度，
+        // 看起来像屏幕上的灰点而不是设计出来的光。宁可少而清楚。
+        default: 2.1,
         hint: "调大从「尘埃」变成「光点」，再大就丢掉了细腻感",
       },
       {
@@ -92,7 +116,9 @@
         min: 0,
         max: 1,
         step: 0.01,
-        default: 0.55,
+        // 默认比「最长拖尾」短一截：细长的斜线正是划痕的视觉特征，短尾或圆点
+        // 才像星尘。想要星轨的可以把 星轨 规则自带的推荐值套上来。
+        default: 0.45,
         hint: "调大留下余晖与轨迹，调到 0 就是每帧清屏、干净利落",
       },
       {
@@ -110,8 +136,8 @@
         min: 0.2,
         max: 2,
         step: 0.05,
-        default: 1,
-        hint: "调大粒子铺得更开、更疏朗，调小往中心收拢",
+        default: 0.9,
+        hint: "调大铺得更开，超出光碟一圈的部分会自动淡出",
       },
       {
         id: "react",
@@ -225,6 +251,27 @@
     return value < low ? low : value > high ? high : value;
   }
 
+  /**
+   * 把用户传进来的 mask 补成一份完整的、所有字段都可用的配置。
+   * 逐字段夹紧而不是整体接受：一个 0.9 的 ryRatio 会让领地大到盖住文字，
+   * 一个 NaN 会让整块画布消失，这两种「配置错误」都不该由用户来调试。
+   */
+  function normalizeMask(input) {
+    const source = input && typeof input === "object" ? input : {};
+    const pick = (key, fallback) => {
+      const value = Number(source[key]);
+      return Number.isFinite(value) ? value : fallback;
+    };
+    return {
+      cxRatio: clamp(pick("cxRatio", DEFAULT_MASK.cxRatio), -1, 2),
+      cyRatio: clamp(pick("cyRatio", DEFAULT_MASK.cyRatio), -1, 2),
+      rxRatio: clamp(pick("rxRatio", DEFAULT_MASK.rxRatio), 0.02, 2),
+      ryRatio: clamp(pick("ryRatio", DEFAULT_MASK.ryRatio), 0.02, 2),
+      feather: clamp(pick("feather", DEFAULT_MASK.feather), 0, 1),
+      glow: clamp(pick("glow", DEFAULT_MASK.glow), 0, 1),
+    };
+  }
+
   // ── 驱动规则 ────────────────────────────────────────────
   //
   // 每条规则是 { name, blurb, rec, spawn, force }：
@@ -239,11 +286,11 @@
     gravity: {
       name: "重力场",
       blurb: "粒子被低频往下拽，落得慢、飘得远",
-      rec: { count: [120, 360], size: [0.8, 2.4], trail: [0, 0.45], speed: [0.6, 1.4], spread: [0.7, 1.6], react: [0.8, 1.8] },
+      rec: { count: [140, 380], size: [1.2, 3], trail: [0, 0.45], speed: [0.6, 1.4], spread: [0.6, 1.1], react: [0.8, 1.8] },
       spawn(p, env) {
         const rnd = env.rng;
-        p.x = env.w * rnd();
-        p.y = env.h * 0.9 * rnd(); // 从半空起步，不用等第一批落到底
+        p.x = env.cx + (rnd() - 0.5) * env.w;
+        p.y = env.top + env.h * 0.9 * rnd(); // 从半空起步，不用等第一批落到底
         p.vx = (rnd() - 0.5) * env.unit * 0.08;
         p.vy = rnd() * env.unit * 0.06;
         p.drift = (rnd() - 0.5) * 2;
@@ -259,16 +306,18 @@
         // 横向：一个固定漂移加一点正弦摆，避免所有粒子走成一条竖直线
         p.ax = p.drift * env.unit * 0.16 + Math.sin(env.t * p.rate + p.phase) * env.unit * 0.22;
         p.drag = 0.25;
-        // 越接近底部越淡，淡完再回顶部重生——「消散」比「撞到地板消失」安静得多
-        p.fade = clamp01((env.h - p.y) / (env.h * 0.16));
-        if (p.y > env.h) p.dead = true;
+        // 越接近底部越淡，淡完再回顶部重生——「消散」比「撞到地板消失」安静得多。
+        // 这里用领地的上下边界而不是画布边界：粒子只在光碟一圈活动，让它一路
+        // 落到卡片底部毫无意义（那段早就被遮罩淡成 0 了，等于白算几百帧）。
+        p.fade = clamp01((env.bottom - p.y) / (env.h * 0.16));
+        if (p.y > env.bottom) p.dead = true;
       },
     },
 
     burst: {
       name: "径向爆发",
       blurb: "粒子从中心炸开，鼓点落下的那一刻最亮",
-      rec: { count: [120, 400], size: [0.8, 2.4], trail: [0.35, 0.75], speed: [0.8, 1.8], spread: [0.5, 1.2], react: [1, 2] },
+      rec: { count: [110, 320], size: [1.2, 3], trail: [0.35, 0.75], speed: [0.8, 1.8], spread: [0.5, 1.1], react: [1, 2] },
       spawn(p, env) {
         const rnd = env.rng;
         p.angle = rnd() * TAU;
@@ -304,7 +353,7 @@
     turbulence: {
       name: "湍流",
       blurb: "气流推着粒子翻涌，声音越密转得越快",
-      rec: { count: [200, 500], size: [1, 3], trail: [0.6, 0.95], speed: [0.4, 1.2], spread: [1, 2], react: [0.5, 1.4] },
+      rec: { count: [180, 460], size: [1.2, 3.2], trail: [0.6, 0.95], speed: [0.4, 1.2], spread: [0.6, 1.1], react: [0.5, 1.4] },
       spawn(p, env) {
         const rnd = env.rng;
         p.x = env.cx + (rnd() - 0.5) * env.w * 0.9;
@@ -323,8 +372,11 @@
         p.ax = (nx - 0.5) * 2 * amp;
         p.ay = (ny - 0.5) * 2 * amp;
         // 向心的回复力：噪声场是发散的，没有它粒子迟早会被推到角落堆成一团。
-        // 刚度随 spread 反比变化，于是 spread 直接就是「云有多大」。
-        const pull = 1.1 / (env.spread * env.spread);
+        // 刚度必须随尺度走——「每像素多少加速度」这种量纲不能写死常数，否则
+        // 同一组参数在大卡片上把云吹散、在小卡片上又缩成一团。按 unit/maxR
+        // 归一之后，云的相对形状与画布尺寸无关；spread 再反比平方地缩放它，
+        // 于是 spread 直接就是「云有多大」。
+        const pull = 0.5 * (env.unit / env.maxR) / (env.spread * env.spread);
         p.ax += (env.cx - p.x) * pull;
         p.ay += (env.cy - p.y) * pull;
         p.drag = 1.1;
@@ -334,7 +386,7 @@
     orbit: {
       name: "星轨",
       blurb: "粒子绕着中心转，音色越亮转得越快",
-      rec: { count: [80, 300], size: [0.6, 1.8], trail: [0.85, 0.99], speed: [0.7, 1.6], spread: [0.6, 1.5], react: [0.8, 1.6] },
+      rec: { count: [90, 300], size: [1, 2.4], trail: [0.85, 0.99], speed: [0.7, 1.6], spread: [0.6, 1.1], react: [0.8, 1.6] },
       spawn(p, env) {
         const rnd = env.rng;
         p.angle = rnd() * TAU;
@@ -424,10 +476,31 @@
       this.background = typeof options.background === "string" ? options.background : "#f5f2ea";
       this.bgFallback = { r: 245, g: 242, b: 234 };
       this.bg = parseColor(this.background, this.bgFallback);
-      // 默认配色直接取 styles.css 里的赤陶 / 灰 / 苔绿 / 深墨，画布才不会像
-      // 另一个产品贴进来的。
+
+      // 领地。options.mask === false 就退回「铺满整张画布」的老行为，
+      // 其余情况一律按 DEFAULT_MASK 补齐缺失字段——调用方只传一个
+      // { mask: { ryRatio: 0.3 } } 也能用。
+      this.mask = options.mask === false ? null : normalizeMask(options.mask);
+      this.maskOn = false;
+      this.maskCx = 0;
+      this.maskCy = 0;
+      this.maskRx = 1;
+      this.maskRy = 1;
+      this.maskFeather = DEFAULT_MASK.feather;
+      this.maskGlow = DEFAULT_MASK.glow;
+      this.glowGradient = null;
+      this.glowRadius = 0;
+      this.worldUnit = 1;
+      // 默认配色：赤陶（也就是频谱环用的那个强调色）+ 浅陶土 + 暖灰。
+      //
+      // 刻意不含两样东西。一是近黑的深墨 #4c463d——那是正文的颜色，抽到它的
+      // 粒子会在浅底上变成几个扎眼的黑点，整片尘埃立刻读成「屏幕上的脏东西」。
+      // 二是高饱和的苔绿：暖色底上撒一把冷绿，视觉上就是「撒糖霜」，一眼假。
+      // 三档全部落在「纸 + 陶土」这一个色系里，随机抽到哪一档都是同一片光尘，
+      // 而且和频谱环同色，粒子和光碟看起来才是一件东西。
       this.palette = [];
-      this.setPalette(options.palette || ["#a8552f", "#8d8579", "#5f7052", "#4c463d"]);
+      this.sprites = [];
+      this.setPalette(options.palette || ["#a8552f", "#c08a63", "#8d8579"]);
 
       const wanted = typeof options.driver === "string" ? options.driver : "";
       this.driver = DRIVER_DEFS[wanted] ? wanted : "gravity";
@@ -449,8 +522,10 @@
       // 每帧复用的环境对象。规则函数从这里读，不再各自 new。
       this.env = {
         dt: 0,
-        w: 0,
+        w: 0, // 领地的宽 / 高（不是画布的）
         h: 0,
+        top: 0, // 领地的上下边界，坐标仍是画布坐标
+        bottom: 0,
         cx: 0,
         cy: 0,
         unit: 1,
@@ -561,6 +636,42 @@
       for (let index = 0; index < this.pool.length; index += 1) {
         this.pool[index].color = this.pool[index].color % clean.length;
       }
+      this.buildSprites();
+      this.buildGlow(); // 辉光取的是主色，配色换了它也得跟着换
+    }
+
+    /**
+     * 把每种配色烘焙成一颗柔边光点。离屏画布只在换配色时重建一次，运行期
+     * 每颗粒子只是一次 drawImage：边缘的柔和是烘进去的，不花运行时的钱，
+     * 但贴图本身要过一次重采样，比 arc+fill 贵（见 SPRITE_SIZE 处的实测）。
+     */
+    buildSprites() {
+      this.sprites = [];
+      if (typeof document === "undefined" || !document.createElement) return;
+      for (let index = 0; index < this.palette.length; index += 1) {
+        const color = parseColor(this.palette[index], { r: 168, g: 85, b: 47 });
+        const sprite = document.createElement("canvas");
+        sprite.width = SPRITE_SIZE;
+        sprite.height = SPRITE_SIZE;
+        const sctx = sprite.getContext("2d");
+        if (!sctx) {
+          this.sprites = [];
+          return;
+        }
+        const half = SPRITE_SIZE / 2;
+        const head = color.r + "," + color.g + "," + color.b + ",";
+        const gradient = sctx.createRadialGradient(half, half, 0, half, half, half);
+        // 落点：0.34 处还剩 0.82 的实心感，0.62 之后迅速转淡，到边缘归零。
+        // 这样「实心部分」大约是贴图边长的三分之一，也就是粒子直径那么大，
+        // 外面那圈是白送的光晕。
+        gradient.addColorStop(0, "rgba(" + head + "1)");
+        gradient.addColorStop(0.34, "rgba(" + head + "0.82)");
+        gradient.addColorStop(0.62, "rgba(" + head + "0.26)");
+        gradient.addColorStop(1, "rgba(" + head + "0)");
+        sctx.fillStyle = gradient;
+        sctx.fillRect(0, 0, SPRITE_SIZE, SPRITE_SIZE);
+        this.sprites.push(sprite);
+      }
     }
 
     /** 调参数，只传要改的字段。 */
@@ -598,13 +709,26 @@
       }
       if (this.ctx) this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      const hadSize = this.width >= 4 && this.height >= 4;
+      // 先把新尺寸与领地算出来，再搬运粒子——搬运要用的是新领地的尺度，
+      // 顺序反了就会按旧尺度缩放（表现为窗口一变大，轨道半径就慢半拍地漂）。
+      const oldWidth = this.width;
+      const oldHeight = this.height;
+      const oldWorldUnit = this.worldUnit;
+      const hadSize = oldWidth >= 4 && oldHeight >= 4;
+
+      this.width = width;
+      this.height = height;
+      this.unit = Math.min(width, height);
+      this.applyWorld();
+      this.buildGlow();
+
       if (hadSize) {
-        // 按比例搬运，构图不会因为窗口变化而重排。轨道半径跟着「短边」缩放：
-        // 所有规则的尺度都是按短边定的，跟着宽边缩放会让轨道在变宽时失真。
-        const scaleX = width / this.width;
-        const scaleY = height / this.height;
-        const scaleUnit = Math.min(width, height) / Math.min(this.width, this.height);
+        // 按比例搬运，构图不会因为窗口变化而重排。轨道半径跟着领地尺度缩放
+        // （而不是画布的短边）：半径是相对领地定的，跟画布走的话，窗口一拉宽
+        // 轨道就会胀出领地、被遮罩吃掉。
+        const scaleX = width / oldWidth;
+        const scaleY = height / oldHeight;
+        const scaleUnit = oldWorldUnit > 1 ? this.worldUnit / oldWorldUnit : 1;
         for (let index = 0; index < this.pool.length; index += 1) {
           const p = this.pool[index];
           p.x *= scaleX;
@@ -612,21 +736,88 @@
           p.radius *= scaleUnit;
         }
       } else {
-        // 从「没有尺寸」到「有尺寸」：全部重来，让粒子按新画布摊开
+        // 从「没有尺寸」到「有尺寸」：全部重来，让粒子按新领地摊开
         for (let index = 0; index < this.pool.length; index += 1) this.pool[index].live = false;
         this.count = 0;
       }
 
-      this.width = width;
-      this.height = height;
-      this.unit = Math.min(width, height);
-      this.env.w = width;
-      this.env.h = height;
-      this.env.cx = width / 2;
-      this.env.cy = height / 2;
-      this.env.unit = this.unit;
-      this.env.maxR = this.unit * 0.46;
       this.lastTime = 0; // 尺寸变化往往伴随卡顿，别把那一帧的长间隔算进去
+    }
+
+    /**
+     * 把领地写进 env。所有驱动规则都只读 env，于是「粒子活在光碟一圈里」
+     * 这件事只需要在这里说一次——四条规则不用各自知道遮罩的存在，
+     * 重力自然会落在领地底边、爆发半径自然收进领地半径。
+     */
+    applyWorld() {
+      const env = this.env;
+      const width = this.width;
+      const height = this.height;
+      const mask = this.mask;
+      if (mask) {
+        // 按椭圆算：横向半径取画布宽的比例，纵向取高的比例。不做「短边统一」，
+        // 因为这里的约束来自文字（上方标题、下方控件），是纵向的。
+        const cx = width * mask.cxRatio;
+        const cy = height * mask.cyRatio;
+        const rx = Math.max(2, width * mask.rxRatio);
+        const ry = Math.max(2, height * mask.ryRatio);
+        this.maskOn = true;
+        this.maskCx = cx;
+        this.maskCy = cy;
+        this.maskRx = rx;
+        this.maskRy = ry;
+        this.maskFeather = mask.feather;
+        this.maskGlow = mask.glow;
+        // 内切圆半径（而不是短半轴）作为「单位长度」：四条规则的尺度都按它定，
+        // 用短半轴会让横向的力在扁椭圆里显得比纵向猛。
+        const half = Math.min(rx, ry);
+        env.cx = cx;
+        env.cy = cy;
+        env.w = rx * 2;
+        env.h = ry * 2;
+        env.top = cy - ry;
+        env.bottom = cy + ry;
+        env.unit = half * 2;
+        env.maxR = half;
+        this.worldUnit = half;
+      } else {
+        this.maskOn = false;
+        this.maskCx = width / 2;
+        this.maskCy = height / 2;
+        this.maskRx = width / 2;
+        this.maskRy = height / 2;
+        this.maskGlow = 0;
+        env.cx = width / 2;
+        env.cy = height / 2;
+        env.w = width;
+        env.h = height;
+        env.top = 0;
+        env.bottom = height;
+        env.unit = this.unit;
+        env.maxR = this.unit * 0.46;
+        this.worldUnit = this.unit;
+      }
+    }
+
+    /**
+     * 预建辉光渐变。渐变对象是「相对某次变换」的，创建一次就能一直用，没必要
+     * 每帧 new 一个（那正是本文件反复避免的逐帧分配）。尺寸或配色变了才重建。
+     */
+    buildGlow() {
+      const ctx = this.ctx;
+      this.glowGradient = null;
+      this.glowRadius = 0;
+      if (!ctx || !this.maskOn || this.maskGlow <= 0 || !this.palette.length) return;
+      const radius = Math.max(this.maskRx, this.maskRy);
+      if (!(radius > 1)) return;
+      const color = parseColor(this.palette[0], { r: 168, g: 85, b: 47 });
+      const rgb = color.r + "," + color.g + "," + color.b;
+      const gradient = ctx.createRadialGradient(this.maskCx, this.maskCy, 0, this.maskCx, this.maskCy, radius);
+      gradient.addColorStop(0, "rgba(" + rgb + ",1)");
+      gradient.addColorStop(0.55, "rgba(" + rgb + ",0.4)");
+      gradient.addColorStop(1, "rgba(" + rgb + ",0)");
+      this.glowGradient = gradient;
+      this.glowRadius = radius;
     }
 
     /**
@@ -655,6 +846,8 @@
       this.ctx = null;
       this.canvas = null;
       this.palette = [];
+      this.sprites = [];
+      this.glowGradient = null;
     }
 
     // ── 内部 ──────────────────────────────────────────────────
@@ -739,7 +932,8 @@
       // 拖尾：半透明地盖一层背景色，而不是 clearRect。alpha 由 trail 决定，
       // trail = 0 时 alpha = 1（等价于清屏），trail = 1 时留下几乎不散的长尾。
       // 字符串缓存起来复用：每帧拼一个新串会白白让 GC 忙起来。
-      const alpha = Math.max(0.015, 1 - params.trail * 0.985).toFixed(3);
+      const trailAlpha = Math.max(0.015, 1 - params.trail * 0.985);
+      const alpha = trailAlpha.toFixed(3);
       const key = alpha + "|" + this.background;
       if (key !== this.colorKey) {
         this.colorKey = key;
@@ -749,6 +943,19 @@
       ctx.fillStyle = this.trailFill;
       ctx.fillRect(0, 0, this.width, this.height);
 
+      // 光碟背后的暖色辉光。乘 trailAlpha 而不是直接画：拖尾层本身是
+      // 「每帧盖掉一部分」，辉光也是每帧画一次，稳态亮度会是 glow / trailAlpha，
+      // 拖尾拉长时就会越积越亮直到糊成一片。乘上去之后稳态恰好收敛到 glow，
+      // 不论 trail 调到哪里，亮度都是同一个数。
+      if (this.glowGradient && this.maskGlow > 0) {
+        ctx.globalAlpha = this.maskGlow * trailAlpha;
+        ctx.fillStyle = this.glowGradient;
+        ctx.beginPath();
+        ctx.arc(this.maskCx, this.maskCy, this.glowRadius, 0, TAU);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+
       // 尺寸随响度微涨，再用 beat 打一个整体的脉冲——这是四条规则共用的
       // 「听得到拍子」的最低保证，不用每条规则各写一遍。
       const size = Math.max(
@@ -756,25 +963,59 @@
         params.size * (1 + env.level * 0.55 * env.react) * (1 + env.beat * 0.45 * env.react)
       );
 
-      // 按颜色分组绘制：外层遍历配色，内层遍历粒子，这样每帧只切换
-      // palette.length 次 fillStyle，而不是每颗粒子切一次。
-      //
-      // 画圆而不是画方：方点在 2 倍屏上就是一堆看得见的小方块，和这套「细线、
-      // 克制」的设计语言不搭。实测 600 颗圆点每帧 0.38 ms（方块 0.12 ms），
-      // 换来的观感值这个差价；真要再压，改成 fillRect 就行，形状是唯一区别。
-      const radius = size / 2;
+      // 按颜色分组绘制：外层遍历配色，内层遍历粒子。每颗粒子贴一张自己的
+      // 配色贴图，所以同一配色的粒子能连着画完，不用来回换图。
+      // （sprites 与 palette 同长，逐位对应；贴图为空时退回 arc 画法。）
+      const sprite = size * SPRITE_SCALE;
+      const spriteHalf = sprite / 2;
+      const sprites = this.sprites;
       const palette = this.palette;
+
+      // 领地的落差。归一化成「椭圆上的相对距离」之后判断：d = 1 是边界，d 越小
+      // 越靠圆心。feather 段内用 smoothstep 而不是线性——线性淡出的两端会各留
+      // 一道能看出来的硬边，而「看不出边界在哪」正是这块遮罩存在的理由。
+      const masked = this.maskOn;
+      const invRx = 1 / this.maskRx;
+      const invRy = 1 / this.maskRy;
+      const cx = this.maskCx;
+      const cy = this.maskCy;
+      const inner = 1 - this.maskFeather;
+      const inner2 = inner * inner;
+      const invFeather = this.maskFeather > 0 ? 1 / this.maskFeather : 0;
+
       for (let color = 0; color < palette.length; color += 1) {
-        ctx.fillStyle = palette[color];
+        const image = sprites[color] || null;
+        if (!image) ctx.fillStyle = palette[color]; // 退化路径才需要每颗粒子设色
         for (let index = 0; index < active; index += 1) {
           const p = this.pool[index];
           if (p.color !== color) continue;
-          const opacity = p.alpha * p.fade;
+          let opacity = p.alpha * p.fade;
           if (opacity <= 0.01) continue;
+
+          if (masked) {
+            const dx = (p.x - cx) * invRx;
+            const dy = (p.y - cy) * invRy;
+            const d2 = dx * dx + dy * dy;
+            if (d2 >= 1) continue; // 出了领地：不画，也不留拖尾
+            if (d2 > inner2) {
+              // 只在淡出段开方：领地中心那一大片粒子省掉一次 sqrt。
+              let mask = (1 - Math.sqrt(d2)) * invFeather;
+              mask = mask * mask * (3 - 2 * mask);
+              opacity *= mask;
+              if (opacity <= 0.01) continue;
+            }
+          }
+
           ctx.globalAlpha = opacity;
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, radius, 0, TAU);
-          ctx.fill();
+          if (image) {
+            ctx.drawImage(image, p.x - spriteHalf, p.y - spriteHalf, sprite, sprite);
+          } else {
+            // 贴图建不出来（离屏画布不可用）时的退路：硬边圆点。观感差一档，
+            // 但不至于整层空白——「宁可比设计的丑一点，也别什么都不显示」。
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, size / 2, 0, TAU);
+            ctx.fill();
+          }
         }
       }
       ctx.globalAlpha = 1;
@@ -813,7 +1054,12 @@
 
   /**
    * @param {HTMLCanvasElement} canvas
-   * @param {{driver?:string, palette?:string[], params?:object, seed?:number, background?:string}} [opts]
+   * @param {{driver?:string, palette?:string[], params?:object, seed?:number,
+   *          background?:string,
+   *          mask?:false|{cxRatio?:number, cyRatio?:number, rxRatio?:number,
+   *                       ryRatio?:number, feather?:number, glow?:number}}} [opts]
+   *   mask 缺省即启用（默认值见 DEFAULT_MASK，对齐光碟圆心，不碰文字）；
+   *   传 false 退回「铺满整张画布」。
    */
   function create(canvas, opts) {
     if (!canvas || typeof canvas.getContext !== "function") return noopHandle(opts && opts.params);
@@ -865,5 +1111,7 @@
     create: create,
     recommend: recommend,
     defaultsFor: defaultsFor,
+    /** 领地的默认几何，暴露出来便于上层照着实际布局微调（见文件里 DEFAULT_MASK 的注释）。 */
+    DEFAULT_MASK: DEFAULT_MASK,
   };
 })();

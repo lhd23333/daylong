@@ -514,9 +514,10 @@
   function currentMeta() {
     if (!engine || !engine.recipe) return "";
     const recipe = engine.recipe;
+    // 刻意不再重复音景名——它就在正上方的标题里，同一张卡片上说两遍。
+    // 省下的这几个字在窄屏上正好够让这一行不折成三行。
     const parts = [
-      `<b>${esc(recipe.soundscape.name)}</b>`,
-      `${esc(String(recipe.bpm))} BPM`,
+      `<b>${esc(String(recipe.bpm))} BPM</b>`,
       `节奏量 ${Math.round(recipe.density * 100)}%`,
       `调性 ${esc(engine.key || "—")}`,
     ];
@@ -865,11 +866,15 @@
     ctx.save();
     ctx.translate(center, center);
     ctx.lineCap = "round";
-    const stroke = Math.max(1.6, ((Math.PI * 2 * ringInner) / groups) * 0.42);
+    const stroke = Math.max(1.6, ((Math.PI * 2 * ringInner) / groups) * 0.5);
     for (let index = 0; index < groups; index += 1) {
       const angle = -Math.PI / 2 + (index / groups) * Math.PI * 2;
       const level = viz.bars[index];
-      const length = Math.max(1.5, level * ringMax);
+      // 下限用 ringMax 的相对值而不是写死的像素：这一版的音色是电钢/铺底，
+      // 实测每根柱子的 level 稳定落在 0.32–0.95（从不接近 0），所以这个下限
+      // 平时并不生效；写成相对值是为了换画布、换音色之后仍然成立——写死绝对值
+      // 会在小画布上占掉整根柱子、在大画布上又等于没有。
+      const length = ringMax * Math.max(0.08, level);
       const cos = Math.cos(angle);
       const sin = Math.sin(angle);
       ctx.strokeStyle = `rgba(${CLAY_RGB}, ${(0.22 + level * 0.62).toFixed(3)})`;
@@ -975,11 +980,15 @@
         const drivers = (window.MCParticles && window.MCParticles.DRIVERS) || [];
         const driverId = app.driver || (drivers[0] && drivers[0].id);
         const driver = drivers.find((item) => item.id === driverId);
-        const progression =
-          Number.isInteger(recipe.progressionIndex) && recipe.soundscape.progressions[recipe.progressionIndex];
+        // 调性写**正在生效**的值（engine.key 不会逐小节变，写出来是稳定的）；
+        // 和声进行只在被钉住时写具体的，选「自动」时写「进行自动」——自动时
+        // 引擎每一小节都会换一条进行，这里写死某一小节的值会是假的。
+        const pinnedProgression =
+          Number.isInteger(recipe.progressionIndex) &&
+          recipe.soundscape.progressions[recipe.progressionIndex];
         $("tune-summary").textContent = [
-          engine.key ? `${engine.key} 调` : "—",
-          progression ? progressionLabel(progression) : "—",
+          engine.key ? `${engine.key} 调` : "调性自动",
+          pinnedProgression ? progressionLabel(pinnedProgression) : "进行自动",
           driver ? driver.name : "—",
         ].join(" · ");
       }
@@ -1059,6 +1068,8 @@
     button.disabled = !recipe;
     const on = isFavorite(recipe);
     $("fav-label").textContent = on ? "已收藏" : "收藏";
+    // 「收藏 / 已收藏」是个开关，只换文字的话读屏用户听不出当前状态。
+    button.setAttribute("aria-pressed", on ? "true" : "false");
     button.classList.toggle("is-on", on);
   }
 
@@ -1549,7 +1560,7 @@
       const item = app.reminderItem;
       $("reminder").hidden = true;
       if (!item) return;
-      await playMelodyOf(item, `还有几分钟：${item.title || item.label || ""}`);
+      await playMelodyOf(item, `为「${item.title || item.label || ""}」提前听一段`);
     });
 
     $("fav-list").addEventListener("click", async (event) => {
@@ -1578,6 +1589,30 @@
 
   // ── 启动 ──────────────────────────────────────────────────
 
+  /**
+   * 告诉用户远端音乐通路到底通没通。
+   *
+   * 这条提示存在的理由很实在：不配 .env 也能完整演示（本地合成器是主线），
+   * 所以「按下生成、结果出的是本地循环」这件事不该让人猜——直接写清楚是
+   * 「没配」还是「配了但失败了」，用户才知道要不要去动 .env。
+   */
+  async function renderRemoteMusicHint() {
+    const box = $("ai-fallback");
+    if (!box) return;
+    let health = null;
+    try {
+      health = await api("/api/health");
+    } catch {
+      return; // 健康接口都读不到，这条提示就没必要硬塞给用户
+    }
+    const remote = (health && health.remote_music) || {};
+    box.hidden = false;
+    box.textContent = remote.configured
+      ? `远端通路已配置（${remote.provider || "未知"}）：按下生成会调用它，失败时自动回落本地。`
+      : "远端通路还没配（可选）：现在按下生成会直接用本地合成器现场生成一段，不联网。" +
+        "想换成真·AI 生成的音频，见项目根目录的 .env.example。";
+  }
+
   async function boot() {
     loadPrefs();
     syncStateInputs();
@@ -1585,6 +1620,7 @@
     renderScapes();
     bind();
     syncTransport();
+    renderRemoteMusicHint();
 
     // 收藏不挡首屏：后端 /api/playlist 慢一点或没起来，页面也照常用。
     // loadFavorites 自己吞异常，这里不用 await。

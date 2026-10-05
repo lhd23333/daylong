@@ -1051,6 +1051,9 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   display: flex;
   align-items: center;
   gap: 1rem;
+  /* 窄屏上播放键 + 两个按钮就占掉大半行，中间那行字只剩几个字的位置，
+     会竖着排成一条。允许换行，并让 meta 在窄屏独占一行（见下面的媒体查询）。 */
+  flex-wrap: wrap;
 }
 
 .transport-actions {
@@ -1433,6 +1436,18 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 
   .app {
     padding: 0 0.95rem 6rem;
+  }
+
+  /* 播放键和「换一段 / 收藏」先占一行，参数那行落到下面独占一整行。
+     否则中间只剩两三个字的宽度，会竖着排成一条，比换行难看得多。 */
+  .transport-meta {
+    flex: 1 1 100%;
+    order: 3;
+  }
+
+  /* 光碟在窄屏上跟着卡片宽度走，不必再留 80% 的余量。 */
+  .disc-stage {
+    width: min(19rem, 92%);
   }
 
   .topbar {

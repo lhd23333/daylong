@@ -13,6 +13,23 @@
   MonoSynth / MembraneSynth / NoiseSynth + Filter / Chorus / Reverb / FeedbackDelay /
   Limiter / Meter / Analyser），在休息点实时生成音乐。
 
+## 音频可视化的两层：只借鉴架构思路，未使用第三方代码
+
+`static/js/features.js` 与 `static/js/particles.js` 采用一层「音频分析 → 标量 → 渲染」的
+分层：前者把 engine 的 256 点 FFT 归纳成 bass / mid / treble / rms / 谱心 / 拍点几个
+标量，后者只读这些标量、完全不碰原始 FFT。**这个分层思路借鉴自 Audio Shader Studio
+（MIT）一类项目**——同一套分析可以驱动任意多套视觉，换视觉不用改分析。
+
+- 参考对象：Audio Shader Studio，License: MIT（架构思路来源，非代码来源）。
+- `static/js/particles.js` 里 orbit 驱动的「节拍加速」另有一处思路来源：
+  resonance-visualizer 的粒子隧道。该项信息不全，这里只记为思路来源，不列仓库地址
+  与许可证。
+
+**这两个文件里的代码全部是自己写的，没有从上述项目复制任何代码。** 借的是分层方式
+（把分析结果压成标量再交给渲染层），不是实现——这一点在 `features.js` 与
+`particles.js` 的文件头注释里也写明了。因为属于思路层面的参考而非代码引用，此处
+不附版本号与下载日期。
+
 ## 曾经用过、现已移除的两个库
 
 下面两个库在早期版本里用过，改版后已**从仓库中删除**，此处仅留记录，便于对照
