@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f5f2ea" />
+    <meta name="description" content="朝夕 —— 把一天的日程放进来，得到该休息的时间点；每个休息点都配一段当场生成的音乐。" />
+    <title>朝夕 · 陪你过完这一天</title>
+    <!-- 声明 icon 之后浏览器不会再去找 /favicon.ico，控制台少一条 404。 -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <!-- 图标全部是手写的细线 SVG：不用 emoji，不用图标字体，也不引外部资源。
+         统一 1.5 描边、currentColor，靠 CSS 控制大小。 -->
+    <svg class="icon-sprite" aria-hidden="true" focusable="false">
+      <symbol id="i-today" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.1" /><path d="M12 2.8v2.1M12 19.1v2.1M2.8 12h2.1M19.1 12h2.1M5.5 5.5l1.5 1.5M17 17l1.5 1.5M18.5 5.5L17 7M7 17l-1.5 1.5" /></symbol>
+      <symbol id="i-you" viewBox="0 0 24 24"><circle cx="12" cy="8.3" r="3.4" /><path d="M4.9 20.1c0-3.6 3.2-6.1 7.1-6.1s7.1 2.5 7.1 6.1" /></symbol>
+      <symbol id="i-listen" viewBox="0 0 24 24"><path d="M4 14.4V9.6M8 17.4V6.6M12 20.4V3.6M16 17.4V6.6M20 14.4V9.6" /></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M8.6 5.7l9.9 6.3-9.9 6.3z" /></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9.3 5.7v12.6M14.7 5.7v12.6" /></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5.6v12.8M5.6 12h12.8" /></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16.2V4.9M7.7 9.2L12 4.9l4.3 4.3M4.9 15.5v2.6a1.6 1.6 0 001.6 1.6h11a1.6 1.6 0 001.6-1.6v-2.6" /></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11" /></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19.1 12a7.1 7.1 0 11-2.1-5M19.5 4.8v4.1h-4.1" /></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5.7 7.3h12.6M9.6 7.3V5.6h4.8v1.7M7.5 7.3l.8 11.1h7.4l.8-11.1" /></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M5.7 12.3l4.2 4.2 8.4-8.9" /></symbol>
+      <symbol id="i-note" viewBox="0 0 24 24"><circle cx="7.4" cy="17.3" r="2.5" /><circle cx="17.3" cy="15.3" r="2.5" /><path d="M9.9 17.3V7.3l9.9-2v10" /></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24"><path d="M19.4 14.6A7.6 7.6 0 019.4 4.6a7.8 7.8 0 1010 10z" /></symbol>
+    </svg>
+
+    <div class="app">
+      <header class="topbar">
+        <button class="wordmark" type="button" data-goto="today">
+          <span class="wordmark-name">朝夕</span>
+          <span class="wordmark-tag">陪你过完这一天</span>
+        </button>
+        <nav class="tabs" aria-label="主导航">
+          <button type="button" class="tab is-active" data-goto="today" aria-current="page">
+            <svg class="icon" aria-hidden="true"><use href="#i-today" /></svg><span>今天</span>
+          </button>
+          <button type="button" class="tab" data-goto="you">
+            <svg class="icon" aria-hidden="true"><use href="#i-you" /></svg><span>了解你</span>
+          </button>
+          <button type="button" class="tab" data-goto="rest">
+            <svg class="icon" aria-hidden="true"><use href="#i-listen" /></svg><span>休息</span>
+          </button>
+        </nav>
+      </header>
+
+      <main class="stage" id="stage">
+        <!-- ══════════════ 今天 ══════════════ -->
+        <section class="view is-active" id="view-today" aria-labelledby="care-line">
+          <article class="care" id="care-card" data-tone="calm">
+            <p class="care-when" id="care-when">今天</p>
+            <h1 class="care-line" id="care-line" tabindex="-1">先看一眼今天。</h1>
+            <p class="care-detail" id="care-detail"></p>
+            <p class="care-suggest" id="care-suggest"></p>
+          </article>
+
+          <ul class="day-stats" id="day-stats" aria-label="今天概览"></ul>
+
+          <div class="section-head">
+            <h2>今天的时间轴</h2>
+            <button type="button" class="ghost-btn" id="refresh-day">
+              <svg class="icon" aria-hidden="true"><use href="#i-refresh" /></svg><span>重排一次</span>
+            </button>
+          </div>
+
+          <div class="conflict-note" id="conflict-note" role="status" hidden></div>
+          <ol class="timeline" id="timeline"></ol>
+
+          <p class="empty-hint" id="timeline-empty" hidden>
+            还没有日程。去「了解你」里添几件事，或者导入一份课表。
+          </p>
+        </section>
+
+        <!-- ══════════════ 了解你 ══════════════ -->
+        <section class="view" id="view-you" aria-labelledby="you-title" hidden>
+          <div class="section-head lead">
+            <h1 id="you-title" tabindex="-1">了解你</h1>
+            <p class="lede">这些只存在你自己的电脑上。填多少都行，随时可以改。</p>
+          </div>
+
+          <!-- 状态 -->
+          <section class="panel">
+            <div class="panel-head">
+              <h2>此刻的状态</h2>
+              <span class="panel-note">影响休息点的音乐快慢</span>
+            </div>
+            <div class="dials">
+              <label class="dial" for="state-energy">
+                <span class="dial-name">精力</span>
+                <input type="range" id="state-energy" min="0" max="100" step="1" value="60" />
+                <output class="dial-value" id="out-energy">60</output>
+              </label>
+              <label class="dial" for="state-stress">
+                <span class="dial-name">压力</span>
+                <input type="range" id="state-stress" min="0" max="100" step="1" value="30" />
+                <output class="dial-value" id="out-stress">30</output>
+              </label>
+              <label class="dial" for="state-focus">
+                <span class="dial-name">专注</span>
+                <input type="range" id="state-focus" min="0" max="100" step="1" value="55" />
+                <output class="dial-value" id="out-focus">55</output>
+              </label>
+            </div>
+            <div class="field-row">
+              <label class="field" for="state-sleep">
+                <span class="field-name">昨晚睡了</span>
+                <span class="field-input"><input type="number" id="state-sleep" min="0" max="24" step="0.5" value="7.5" /><em>小时</em></span>
+              </label>
+              <label class="field" for="state-sedentary">
+                <span class="field-name">已经坐了</span>
+                <span class="field-input"><input type="number" id="state-sedentary" min="0" max="1440" step="10" value="60" /><em>分钟</em></span>
+              </label>
+            </div>
+          </section>
+
+          <!-- 作息 -->
+          <section class="panel">
+            <div class="panel-head">
+              <h2>作息</h2>
+              <span class="panel-note">用来挑选问候的措辞</span>
+            </div>
+            <div class="field-row">
+              <label class="field" for="profile-wake">
+                <span class="field-name">通常几点起</span>
+                <span class="field-input"><input type="time" id="profile-wake" value="06:40" /></span>
+              </label>
+              <label class="field" for="profile-sleep">
+                <span class="field-name">通常几点睡</span>
+                <span class="field-input"><input type="time" id="profile-sleep" value="23:00" /></span>
+              </label>
+            </div>
+            <div class="chips" role="radiogroup" aria-label="作息类型" id="chronotype-chips">
+              <button type="button" class="chip" role="radio" aria-checked="false" data-chrono="early_bird">早起型</button>
+              <button type="button" class="chip is-on" role="radio" aria-checked="true" data-chrono="">说不准</button>
+              <button type="button" class="chip" role="radio" aria-checked="false" data-chrono="night_owl">晚睡型</button>
+            </div>
+          </section>
+
+          <!-- 日程 -->
+          <section class="panel">
+            <div class="panel-head">
+              <h2>今天的日程</h2>
+              <div class="panel-actions">
+                <label class="ghost-btn" for="ics-file">
+                  <svg class="icon" aria-hidden="true"><use href="#i-upload" /></svg><span>导入 .ics</span>
+                  <input type="file" id="ics-file" accept=".ics,text/calendar" hidden />
+                </label>
+              </div>
+            </div>
+            <ul class="event-list" id="event-list"></ul>
+            <p class="empty-hint" id="event-empty">还没有日程。在下面加一条，或者导入手机日历导出的 .ics。</p>
+
+            <form class="add-row" id="event-form" novalidate>
+              <input type="text" id="event-title" placeholder="要做什么，例如：数学课" required />
+              <input type="time" id="event-start" required aria-label="开始时间" />
+              <span class="add-row-dash">–</span>
+              <input type="time" id="event-end" required aria-label="结束时间" />
+              <select id="event-category" aria-label="类别">
+                <option value="study">学习</option>
+                <option value="work">工作</option>
+                <option value="commute">通勤</option>
+                <option value="exercise">运动</option>
+                <option value="break">休息</option>
+                <option value="other">其他</option>
+              </select>
+              <button type="submit" class="solid-btn">
+                <svg class="icon" aria-hidden="true"><use href="#i-plus" /></svg><span>加入</span>
+              </button>
+            </form>
+            <p class="form-error" id="event-error" role="alert" hidden></p>
+          </section>
+
+          <!-- 音乐偏好 -->
+          <section class="panel">
+            <div class="panel-head">
+              <h2>喜欢的声音</h2>
+              <span class="panel-note">可以让每天的休息都放它</span>
+            </div>
+            <div class="chips wrap" id="prefer-chips"></div>
+            <p class="panel-foot">不选也行——默认按状态和时段自己挑。</p>
+          </section>
+
+          <div class="sticky-actions">
+            <button type="button" class="solid-btn wide" id="save-profile-btn">
+              <span>保存，重排今天</span>
+            </button>
+            <span class="save-hint" id="save-hint" role="status"></span>
+          </div>
+        </section>
+
+        <!-- ══════════════ 休息 ══════════════ -->
+        <section class="view" id="view-rest" aria-labelledby="player-title" hidden>
+          <div class="player" id="player">
+            <p class="player-context" id="player-context">现在没有在放</p>
+            <h1 class="player-title" id="player-title" tabindex="-1">休息一下</h1>
+            <p class="player-blurb" id="player-blurb">从时间轴上点一个休息点，或者直接在下面挑一个音景。</p>
+
+            <canvas class="viz" id="viz" height="150" aria-hidden="true"></canvas>
+
+            <div class="transport">
+              <button type="button" class="play-btn" id="play-btn" aria-label="开始播放">
+                <svg class="icon" aria-hidden="true"><use href="#i-play" /></svg>
+              </button>
+              <div class="transport-meta" id="player-meta"></div>
+              <button type="button" class="ghost-btn" id="shuffle-btn" title="换一个调性和进行">
+                <svg class="icon" aria-hidden="true"><use href="#i-refresh" /></svg><span>换一段</span>
+              </button>
+            </div>
+
+            <div class="dials player-dials">
+              <label class="dial" for="player-tempo">
+                <span class="dial-name">快慢</span>
+                <input type="range" id="player-tempo" min="40" max="140" step="1" value="80" />
+                <output class="dial-value" id="out-tempo">–</output>
+              </label>
+              <label class="dial" for="player-density">
+                <span class="dial-name">疏密</span>
+                <input type="range" id="player-density" min="0" max="100" step="1" value="45" />
+                <output class="dial-value" id="out-density">–</output>
+              </label>
+              <label class="dial" for="player-volume">
+                <span class="dial-name">音量</span>
+                <input type="range" id="player-volume" min="0" max="100" step="1" value="70" />
+                <output class="dial-value" id="out-volume">70</output>
+              </label>
+            </div>
+          </div>
+
+          <div class="section-head">
+            <h2>音景</h2>
+            <span class="panel-note" id="library-note"></span>
+          </div>
+          <div class="scape-grid" id="scape-grid"></div>
+
+          <details class="panel more">
+            <summary>
+              <span>想让 AI 直接生成一段音频</span>
+              <small>需要在本机 .env 里配好 key；没配也能用上面的音景</small>
+            </summary>
+            <div class="details-body">
+              <div class="field-row">
+                <label class="field" for="ai-duration">
+                  <span class="field-name">时长</span>
+                  <span class="field-input"><input type="number" id="ai-duration" min="5" max="120" step="5" value="30" /><em>秒</em></span>
+                </label>
+                <label class="field" for="ai-style">
+                  <span class="field-name">想要的感觉</span>
+                  <span class="field-input"><input type="text" id="ai-style" placeholder="例如：温暖的钢琴，安静" /></span>
+                </label>
+              </div>
+              <button type="button" class="ghost-btn" id="ai-gen-btn">
+                <svg class="icon" aria-hidden="true"><use href="#i-note" /></svg><span>生成</span>
+              </button>
+              <p class="panel-foot" id="ai-status" role="status" aria-live="polite"></p>
+              <audio id="ai-audio" controls hidden></audio>
+              <p class="panel-foot" id="ai-fallback" hidden></p>
+            </div>
+          </details>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <span>朝夕 · 数据存在本机</span>
+        <button type="button" class="link-btn" id="clear-all-btn">清除全部数据</button>
+      </footer>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+    <script src="/vendor/tone/Tone.min.js"></script>
+    <script src="/js/theory.js"></script>
+    <script src="/js/soundscapes.js"></script>
+    <script src="/js/engine.js"></script>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

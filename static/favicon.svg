@@ -1,0 +1,8 @@
+<!-- 朝夕的标识：地平线上的一轮日。和页面里的图标同一套语言——
+     细线、暖纸底、赭石色，不用渐变也不用 emoji。
+     16px 下要能认出来，所以只留三个形状。 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="朝夕">
+  <rect width="32" height="32" rx="7" fill="#f5f2ea" />
+  <path d="M16 8.4a7.2 7.2 0 0 0-7.2 7.2h14.4A7.2 7.2 0 0 0 16 8.4z" fill="#a8552f" />
+  <rect x="5.6" y="18.6" width="20.8" height="1.7" rx="0.85" fill="#1e1c19" opacity="0.5" />
+</svg>

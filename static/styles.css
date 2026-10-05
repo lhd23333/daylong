@@ -1,0 +1,1263 @@
+/* ============================================================
+   朝夕 · 样式表
+   设计意图：纸感底色 + 细线分隔 + 克制的暖色点缀。
+   刻意避开的东西：紫色渐变、发光球、emoji 图标、"AI 驱动"角标、
+   大圆角卡片配阴影堆叠。这个产品想让人觉得是「有人认真做过」，
+   而不是「模型生成的」。
+   ============================================================ */
+
+:root {
+  --paper: #f5f2ea;
+  --paper-lift: #fbf9f3;
+  --paper-sink: #ede8dc;
+  --ink: #1e1c19;
+  --ink-2: #4c463d;
+  --ink-3: #8d8579;
+  --line: rgba(30, 28, 25, 0.1);
+  --line-strong: rgba(30, 28, 25, 0.18);
+  --clay: #a8552f;
+  --clay-soft: rgba(168, 85, 47, 0.08);
+  --sage: #5f7052;
+  --sage-soft: rgba(95, 112, 82, 0.1);
+
+  --font-sans: "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei", "Hiragino Sans GB",
+    system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* 衬线只用在少数几处大字号上：宋体的书卷气在这个尺寸才立得住，
+     小字号会糊，所以正文一律走无衬线。 */
+  --font-serif: Georgia, "Songti SC", "STSong", "SimSun", "Noto Serif SC", serif;
+
+  --radius: 13px;
+  --measure: 44rem;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+p,
+ul,
+ol,
+figure {
+  margin: 0;
+  padding: 0;
+}
+
+ul,
+ol {
+  list-style: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.icon-sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.icon {
+  width: 1.05em;
+  height: 1.05em;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ── 骨架 ─────────────────────────────────────────────── */
+
+.app {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 0 1.35rem 4rem;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.3rem 0 0.9rem;
+  background: linear-gradient(var(--paper) 72%, rgba(245, 242, 234, 0));
+}
+
+.wordmark {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0;
+  text-align: left;
+}
+
+.wordmark-name {
+  font-family: var(--font-serif);
+  font-size: 1.45rem;
+  letter-spacing: 0.12em;
+  line-height: 1;
+}
+
+.wordmark-tag {
+  font-size: 0.75rem;
+  color: var(--ink-3);
+  letter-spacing: 0.04em;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.15rem;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.7rem;
+  border-radius: 999px;
+  color: var(--ink-3);
+  font-size: 0.82rem;
+  transition: background-color 0.18s, color 0.18s;
+}
+
+.tab:hover {
+  color: var(--ink-2);
+  background: rgba(30, 28, 25, 0.04);
+}
+
+.tab.is-active {
+  color: var(--ink);
+  background: var(--paper-lift);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.view {
+  animation: rise 0.34s cubic-bezier(0.22, 0.7, 0.3, 1) both;
+}
+
+.view[hidden] {
+  display: none;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .view {
+    animation: none;
+  }
+}
+
+/* ── 关怀卡 ───────────────────────────────────────────── */
+
+.care {
+  position: relative;
+  margin: 0.6rem 0 1.6rem;
+  padding: 1.7rem 1.6rem 1.6rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper-lift);
+  overflow: hidden;
+}
+
+/* 左侧一道极窄的暖色竖线，代替整块彩色背景——
+   有色彩倾向，但不至于把「关怀」做成「广告」。 */
+.care::before {
+  content: "";
+  position: absolute;
+  inset: 1.6rem auto 1.6rem 0;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: var(--clay);
+  opacity: 0.75;
+}
+
+.care[data-tone="gentle"]::before {
+  background: var(--sage);
+}
+
+.care-when {
+  font-size: 0.75rem;
+  color: var(--ink-3);
+  letter-spacing: 0.08em;
+}
+
+.care-line {
+  margin: 0.5rem 0 0.85rem;
+  font-family: var(--font-serif);
+  font-size: clamp(1.4rem, 4.4vw, 1.85rem);
+  font-weight: 400;
+  line-height: 1.45;
+  letter-spacing: 0.01em;
+}
+
+.care-detail {
+  color: var(--ink-2);
+  font-size: 0.9rem;
+}
+
+.care-suggest {
+  margin-top: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--line);
+  color: var(--ink-2);
+  font-size: 0.9rem;
+}
+
+.care-suggest::before {
+  content: "可以试试 · ";
+  color: var(--clay);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+}
+
+.care-suggest:empty {
+  display: none;
+}
+
+/* ── 概览数字 ─────────────────────────────────────────── */
+
+.day-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 2.2rem;
+  margin-bottom: 2rem;
+}
+
+.day-stats li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.day-stats b {
+  font-family: var(--font-serif);
+  font-size: 1.3rem;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.day-stats span {
+  font-size: 0.72rem;
+  color: var(--ink-3);
+  letter-spacing: 0.04em;
+}
+
+/* ── 小标题 ───────────────────────────────────────────── */
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.section-head h1,
+.section-head h2 {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: 1.12rem;
+  letter-spacing: 0.05em;
+}
+
+.section-head.lead {
+  display: block;
+  margin-bottom: 1.6rem;
+}
+
+.section-head.lead h1 {
+  font-size: 1.6rem;
+  margin-bottom: 0.3rem;
+}
+
+.lede {
+  color: var(--ink-3);
+  font-size: 0.86rem;
+}
+
+/* ── 时间轴 ───────────────────────────────────────────── */
+
+.timeline {
+  position: relative;
+  margin-bottom: 1rem;
+}
+
+/* 一条贯穿的细线；圆点和小卡片像珠子一样串在上面。 */
+.timeline::before {
+  content: "";
+  position: absolute;
+  left: 3.6rem;
+  top: 1.1rem;
+  bottom: 1.1rem;
+  width: 1px;
+  background: var(--line);
+  transform: translateX(-0.5px);
+}
+
+.tl-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 3.6rem 1fr;
+  align-items: start;
+}
+
+.tl-item::before {
+  content: "";
+  position: absolute;
+  left: 3.6rem;
+  top: 1.15rem;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--paper);
+  box-shadow: 0 0 0 1.5px var(--ink-3);
+  transform: translateX(-50%);
+  z-index: 1;
+}
+
+.tl-time {
+  padding: 0.95rem 1rem 0 0;
+  text-align: right;
+  font-size: 0.75rem;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.tl-body {
+  padding: 0.85rem 0 0.85rem 1.35rem;
+}
+
+/* 已经过去的部分只做轻微后退。早先用了 0.48，结果到了晚上整页都发灰、
+   像被禁用——"今天"这个视图本来就该在傍晚时显得前半段是背景。 */
+.tl-item.is-past {
+  opacity: 0.8;
+}
+
+.tl-item.is-past::before {
+  box-shadow: 0 0 0 1.5px var(--line-strong);
+}
+
+.tl-title {
+  font-size: 0.94rem;
+  line-height: 1.5;
+}
+
+.tl-meta {
+  margin-top: 0.15rem;
+  font-size: 0.76rem;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 休息点做成一张小卡片，明确区别于日程 */
+.tl-item.is-break::before {
+  background: var(--clay);
+  box-shadow: 0 0 0 3px var(--paper), 0 0 0 4.5px rgba(168, 85, 47, 0.35);
+  width: 6px;
+  height: 6px;
+}
+
+.tl-item.is-break .tl-body {
+  margin: 0.28rem 0 0.28rem 1.35rem;
+  padding: 0.95rem 1.1rem;
+  border: 1px solid rgba(168, 85, 47, 0.18);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: rgba(168, 85, 47, 0.045);
+}
+
+/* 已经过去的休息点不再是一张褪色的卡片——那样读起来像渲染坏了。
+   它退回成一条普通的时间轴条目，只有还没到 / 正在进行的休息点才立起来。
+   顺带给出一个明确的时间语言：卡片 = 还能用得上。 */
+.tl-item.is-break.is-past .tl-body {
+  margin: 0.28rem 0;
+  padding: 0.7rem 0 0.7rem 1.35rem;
+  border-color: transparent;
+  background: transparent;
+}
+
+.tl-item.is-break.is-past::before {
+  width: 5px;
+  height: 5px;
+  background: var(--paper);
+  box-shadow: 0 0 0 1.5px var(--line-strong);
+}
+
+/* 过去的休息点也不该再喊人来点它。一页里堆四个实心黑按钮，而其中只有
+   还没到的那个是真能用的——那会把"现在该做什么"淹掉。行动入口只留给
+   未来的休息点；过去那条留一个安静的文字通道，补记用。 */
+.tl-item.is-break.is-past .solid-btn {
+  display: none;
+}
+
+.tl-item.is-break.is-past .ghost-btn {
+  padding: 0.1rem 0;
+  border-color: transparent;
+  color: var(--ink-3);
+  font-size: 0.72rem;
+}
+
+.tl-item.is-break.is-past .ghost-btn:hover {
+  border-color: transparent;
+  color: var(--ink-2);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.tl-item.is-break.is-done .tl-body {
+  border-color: var(--line);
+  background: transparent;
+}
+
+.tl-break-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.tl-label {
+  font-size: 0.98rem;
+  letter-spacing: 0.02em;
+}
+
+.tl-duration {
+  flex: none;
+  font-size: 0.74rem;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.tl-reason {
+  margin-top: 0.3rem;
+  font-size: 0.8rem;
+  color: var(--ink-2);
+}
+
+.tl-break-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-top: 0.75rem;
+}
+
+.tl-scape {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.76rem;
+  color: var(--clay);
+}
+
+.tl-scape .icon {
+  width: 0.95em;
+  height: 0.95em;
+}
+
+.tl-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex: none;
+}
+
+/* 「现在」标尺 */
+.tl-now {
+  position: relative;
+  display: grid;
+  grid-template-columns: 3.6rem 1fr;
+  align-items: center;
+  padding: 0.5rem 0;
+}
+
+.tl-now span {
+  padding-right: 1rem;
+  text-align: right;
+  font-size: 0.72rem;
+  color: var(--clay);
+  font-variant-numeric: tabular-nums;
+}
+
+.tl-now i {
+  display: block;
+  height: 1px;
+  background: linear-gradient(90deg, var(--clay), rgba(168, 85, 47, 0.12));
+}
+
+.tl-now i::before {
+  content: "";
+  display: block;
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 50%;
+  background: var(--clay);
+}
+
+.empty-hint {
+  padding: 2rem 0;
+  color: var(--ink-3);
+  font-size: 0.86rem;
+  text-align: center;
+}
+
+.conflict-note {
+  margin-bottom: 0.9rem;
+  padding: 0.7rem 0.9rem;
+  border-radius: 9px;
+  background: rgba(168, 85, 47, 0.07);
+  color: var(--ink-2);
+  font-size: 0.82rem;
+}
+
+/* ── 面板 ─────────────────────────────────────────────── */
+
+.panel {
+  margin-bottom: 1.1rem;
+  padding: 1.25rem 1.3rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper-lift);
+}
+
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+.panel-head h2 {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: 1rem;
+  letter-spacing: 0.05em;
+}
+
+.panel-note,
+.panel-foot {
+  font-size: 0.75rem;
+  color: var(--ink-3);
+}
+
+.panel-foot {
+  margin-top: 0.8rem;
+}
+
+/* ── 拨盘（range） ────────────────────────────────────── */
+
+.dials {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.dial {
+  display: grid;
+  grid-template-columns: 3.2rem 1fr 2.6rem;
+  align-items: center;
+  gap: 0.85rem;
+  cursor: pointer;
+}
+
+/* 还没选音景时快慢/疏密是禁用的，读数也只是「–」——让滑杆看起来就不可动，
+   而不是能拖却拖不动。 */
+.dial input[type="range"]:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.dial:has(input[type="range"]:disabled) {
+  cursor: default;
+}
+
+.dial-name {
+  font-size: 0.82rem;
+  color: var(--ink-2);
+}
+
+.dial-value {
+  font-size: 0.8rem;
+  color: var(--ink-3);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 20px;
+  background: none;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 2px;
+  border-radius: 2px;
+  background: var(--line-strong);
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  margin-top: -5.5px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--ink);
+  transition: transform 0.15s;
+}
+
+input[type="range"]:active::-webkit-slider-thumb {
+  transform: scale(1.18);
+}
+
+input[type="range"]::-moz-range-track {
+  height: 2px;
+  border-radius: 2px;
+  background: var(--line-strong);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 4px var(--clay-soft);
+}
+
+/* ── 字段 ─────────────────────────────────────────────── */
+
+.field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.9rem;
+  margin-top: 1.1rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.field-name {
+  font-size: 0.78rem;
+  color: var(--ink-3);
+}
+
+.field-input {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper);
+  transition: border-color 0.18s;
+}
+
+.field-input:focus-within {
+  border-color: var(--clay);
+}
+
+.field-input input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: none;
+  outline: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.field-input em {
+  font-size: 0.75rem;
+  font-style: normal;
+  color: var(--ink-3);
+  flex: none;
+}
+
+/* ── 选项胶囊 ─────────────────────────────────────────── */
+
+.chips {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 1.1rem;
+}
+
+.chips.wrap {
+  flex-wrap: wrap;
+  margin-top: 0;
+}
+
+.chip {
+  padding: 0.35rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink-2);
+  font-size: 0.8rem;
+  transition: all 0.18s;
+}
+
+.chip:hover {
+  border-color: var(--line-strong);
+}
+
+.chip.is-on {
+  border-color: var(--clay);
+  background: var(--clay-soft);
+  color: var(--clay);
+}
+
+/* ── 按钮 ─────────────────────────────────────────────── */
+
+.ghost-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink-2);
+  font-size: 0.79rem;
+  cursor: pointer;
+  transition: all 0.18s;
+}
+
+.ghost-btn:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.solid-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.5rem 1.05rem;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 0.82rem;
+  transition: opacity 0.18s;
+}
+
+.solid-btn:hover {
+  opacity: 0.85;
+}
+
+.solid-btn.wide {
+  width: 100%;
+  padding: 0.7rem;
+}
+
+.solid-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.link-btn {
+  padding: 0;
+  color: var(--ink-3);
+  font-size: 0.75rem;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--line-strong);
+}
+
+.link-btn:hover {
+  color: var(--ink-2);
+}
+
+/* ── 日程清单 ─────────────────────────────────────────── */
+
+.event-list {
+  display: grid;
+  gap: 0.1rem;
+  margin-bottom: 0.5rem;
+}
+
+.event-item {
+  display: grid;
+  grid-template-columns: 6.4rem 1fr auto;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.5rem 0.15rem;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.85rem;
+}
+
+.event-item:last-child {
+  border-bottom: 0;
+}
+
+.event-when {
+  color: var(--ink-3);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.event-item .icon-btn {
+  padding: 0.25rem;
+  border-radius: 6px;
+  color: var(--ink-3);
+  line-height: 0;
+  opacity: 0;
+  transition: opacity 0.18s, color 0.18s;
+}
+
+.event-item:hover .icon-btn,
+.event-item:focus-within .icon-btn {
+  opacity: 1;
+}
+
+.event-item .icon-btn:hover {
+  color: var(--clay);
+}
+
+.add-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.9rem;
+  padding-top: 1rem;
+  border-top: 1px dashed var(--line);
+}
+
+.add-row input[type="text"] {
+  flex: 1 1 10rem;
+  min-width: 0;
+}
+
+.add-row input[type="time"],
+.add-row select {
+  flex: none;
+}
+
+.add-row input,
+.add-row select {
+  padding: 0.42rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper);
+  outline: none;
+  font-size: 0.82rem;
+}
+
+.add-row input:focus,
+.add-row select:focus {
+  border-color: var(--clay);
+}
+
+.add-row-dash {
+  color: var(--ink-3);
+}
+
+.form-error {
+  margin-top: 0.6rem;
+  color: var(--clay);
+  font-size: 0.8rem;
+}
+
+.sticky-actions {
+  position: sticky;
+  bottom: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin-top: 1.6rem;
+  padding: 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(251, 249, 243, 0.92);
+  backdrop-filter: blur(8px);
+}
+
+.save-hint {
+  font-size: 0.78rem;
+  color: var(--sage);
+}
+
+/* ── 播放器 ───────────────────────────────────────────── */
+
+.player {
+  margin: 0.6rem 0 2rem;
+  padding: 1.6rem 1.5rem 1.3rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper-lift);
+}
+
+.player-context {
+  font-size: 0.75rem;
+  color: var(--ink-3);
+  letter-spacing: 0.06em;
+}
+
+.player-title {
+  margin: 0.4rem 0 0.3rem;
+  font-family: var(--font-serif);
+  font-size: clamp(1.5rem, 5vw, 2rem);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+}
+
+.player-blurb {
+  color: var(--ink-2);
+  font-size: 0.86rem;
+}
+
+.viz {
+  display: block;
+  width: 100%;
+  height: 92px;
+  margin: 1.3rem 0 1rem;
+  transition: height 0.45s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* 还没开始放的时候，频谱区收成一条线。空着的 92px 看着像没加载出来。 */
+.player.is-idle .viz {
+  height: 18px;
+  margin: 0.9rem 0 0.6rem;
+}
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.play-btn {
+  display: grid;
+  place-items: center;
+  width: 3.1rem;
+  height: 3.1rem;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--paper);
+  transition: transform 0.18s, opacity 0.18s;
+}
+
+.play-btn:hover {
+  transform: scale(1.04);
+}
+
+.play-btn .icon {
+  width: 1.3rem;
+  height: 1.3rem;
+}
+
+.transport-meta {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.78rem;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.transport-meta b {
+  color: var(--ink-2);
+  font-weight: 400;
+}
+
+.player-dials {
+  margin-top: 1.3rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--line);
+}
+
+/* ── 音景网格 ─────────────────────────────────────────── */
+
+.scape-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: 0.6rem;
+}
+
+.scape {
+  padding: 0.85rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--paper-lift);
+  text-align: left;
+  transition: border-color 0.18s, background-color 0.18s, transform 0.18s;
+}
+
+.scape:hover {
+  border-color: var(--line-strong);
+  transform: translateY(-1px);
+}
+
+.scape.is-on {
+  border-color: var(--clay);
+  background: var(--clay-soft);
+}
+
+.scape-name {
+  display: block;
+  font-size: 0.9rem;
+  letter-spacing: 0.03em;
+}
+
+.scape-char {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.72rem;
+  color: var(--ink-3);
+}
+
+/* 音景卡片右下那行「早 / 午时段 · 92–112 BPM」。数字必须整段在一起——
+   破折号（U+2013）本身是允许断行的位置，不锁的话会折成「92–」/「112 BPM」。 */
+.scape-tempo {
+  white-space: nowrap;
+}
+
+.scape-when {
+  display: block;
+  margin-top: 0.5rem;
+  font-size: 0.68rem;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 折叠区 ───────────────────────────────────────────── */
+
+.more {
+  padding: 0;
+}
+
+.more > summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 1.1rem 1.3rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.more > summary small {
+  color: var(--ink-3);
+  font-size: 0.74rem;
+}
+
+.more .details-body {
+  padding: 0 1.3rem 1.3rem;
+  border-top: 1px dashed var(--line);
+  padding-top: 1.1rem;
+}
+
+.more .details-body audio {
+  width: 100%;
+  margin-top: 0.8rem;
+}
+
+/* ── 页脚 / 提示 ──────────────────────────────────────── */
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 2.5rem;
+  padding-top: 1.2rem;
+  border-top: 1px solid var(--line);
+  color: var(--ink-3);
+  font-size: 0.74rem;
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 1.6rem;
+  z-index: 50;
+  transform: translateX(-50%);
+  padding: 0.6rem 1.1rem;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 0.8rem;
+  animation: pop 0.24s ease both;
+}
+
+.toast[hidden] {
+  display: none;
+}
+
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+}
+
+/* ── 窄屏 ─────────────────────────────────────────────── */
+
+@media (max-width: 620px) {
+  body {
+    font-size: 14.5px;
+  }
+
+  .app {
+    padding: 0 0.95rem 6rem;
+  }
+
+  .topbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+    padding-bottom: 0.7rem;
+  }
+
+  /* 手机上把导航压到底部固定，拇指够得到 */
+  .tabs {
+    position: fixed;
+    left: 0.75rem;
+    right: 0.75rem;
+    bottom: 0.75rem;
+    z-index: 30;
+    justify-content: space-around;
+    padding: 0.35rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: rgba(251, 249, 243, 0.94);
+    backdrop-filter: blur(10px);
+  }
+
+  .tab {
+    flex-direction: column;
+    gap: 0.1rem;
+    flex: 1;
+    padding: 0.4rem 0.2rem;
+    font-size: 0.7rem;
+  }
+
+  /* 标签栏在手机上是固定在底部的（约 58px 高 + 0.75rem 下边距）。
+     悬浮保存条必须抬到它上面去，否则「保存，重排今天」会被整个盖住——
+     那是这一页的主操作，盖住等于没有。（实测两者原本重叠 57px。） */
+  .sticky-actions {
+    bottom: 5rem;
+  }
+
+  .care {
+    padding: 1.35rem 1.15rem 1.25rem;
+  }
+
+  .day-stats {
+    gap: 0 1.5rem;
+  }
+
+  .timeline::before {
+    left: 3rem;
+  }
+
+  .tl-item,
+  .tl-now {
+    grid-template-columns: 3rem 1fr;
+  }
+
+  .tl-item::before {
+    left: 3rem;
+  }
+
+  .tl-time {
+    padding-right: 0.75rem;
+    font-size: 0.72rem;
+  }
+
+  .tl-body {
+    padding-left: 1.1rem;
+  }
+
+  .tl-item.is-break .tl-body {
+    margin-left: 1.1rem;
+    padding: 0.85rem 0.9rem;
+  }
+
+  .tl-break-foot {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.6rem;
+  }
+
+  .tl-actions {
+    justify-content: flex-end;
+  }
+
+  .event-item {
+    grid-template-columns: 5.4rem 1fr auto;
+  }
+
+  .event-item .icon-btn {
+    opacity: 1;
+  }
+
+  .footer {
+    margin-bottom: 3.5rem;
+  }
+}

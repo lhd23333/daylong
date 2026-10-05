@@ -1,0 +1,14 @@
+# 统一换行：仓库里一律存 LF，检出到 Windows 时再转 CRLF。
+# 没有这一行的话，换一台机器 clone 下来会满屏「文件都被改了」的假改动。
+* text=auto
+
+# 批处理文件必须保持 CRLF，否则在 Windows 上会被 cmd 当成一条长命令执行。
+# （目前 .bat 在上一级目录，不在此仓库内；留这条是防止以后移进来踩坑。）
+*.bat text eol=crlf
+
+# 二进制文件不做换行转换，否则图片会被改坏。
+*.png binary
+*.jpg binary
+*.ico binary
+*.wav binary
+*.mp3 binary
