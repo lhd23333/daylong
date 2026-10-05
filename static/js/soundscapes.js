@@ -6,7 +6,7 @@
  * 听一小时也不会重复，但始终在同一种气质里。
  *
  * 和声进行用级数记号写（1maj7 / 5dom9 / 6min7 …），配合 keys 可搬到
- * 任意调上，这是「8 个音景 → 上千种组合」的来源。
+ * 任意调上，这是「10 个音景 → 上万种组合」的来源。
  *
  * ── 三条轴是解耦的 ────────────────────────────────────────────
  * 早先每个音景把速度区间写死成硬边界（`bpm: [58, 76]` 就意味着拖不出这个
@@ -44,6 +44,24 @@
    * 音景的存在，所以这里留一条注释守住同步。
    */
   const KEYS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+
+  /**
+   * 鼓点档位。这是和调性、和声进行平级的**第四条自由轴**。
+   *
+   * 分工要分清：音景的 `groove.drums` 决定**律动性格**（重音落在小节的
+   * 哪几个十六分格上），这里决定**打几层**。同一条节奏型，"轻"和"强"
+   * 是完全不同的推动力——前者像秒针，后者能踩着走路。
+   *
+   * 为什么要有这条轴：鼓点原先完全绑在音景上，8 个音景里 4 个是 `none`，
+   * 用户点开最可能先遇到的「晨光」和「呼吸」恰好都没鼓。一个叫节拍伴侣
+   * 的产品，节奏却不可选，这一条是补回来的。
+   */
+  const DRUM_LEVELS = [
+    { id: "none", name: "无", blurb: "不打鼓，让和声自己铺开" },
+    { id: "light", name: "轻", blurb: "只有踩镲打点，像秒针" },
+    { id: "standard", name: "标准", blurb: "底鼓 + 踩镲，有推动力但不吵" },
+    { id: "strong", name: "强", blurb: "底鼓 + 军鼓 + 踩镲，能踩着它走" },
+  ];
 
   // 复用的音色模板，避免每个音景重复一大段合成器参数。
   const TIMBRE = {
@@ -151,7 +169,7 @@
         bell: { timbre: "bell", gain: -25, octave: 5, mode: "sparse", rate: 3 },
         bass: { timbre: "bassRound", gain: -18, octave: 1, mode: "root" },
       },
-      groove: { drums: "none", swing: 0.06 },
+      groove: { drums: "soft", drumLevel: "none", swing: 0.06 },
       space: { reverb: 5.5, wet: 0.46, filter: 5200, chorus: 0.22, delay: 0.1 },
     },
     {
@@ -183,7 +201,7 @@
         bell: { timbre: "bell", gain: -27, octave: 5, mode: "arp", rate: 8 },
         bass: { timbre: "bassRound", gain: -16, octave: 1, mode: "root" },
       },
-      groove: { drums: "lofi", swing: 0.14 },
+      groove: { drums: "lofi", drumLevel: "standard", swing: 0.14 },
       space: { reverb: 3.2, wet: 0.3, filter: 4400, chorus: 0.3, delay: 0.14 },
     },
     {
@@ -214,7 +232,7 @@
         bell: { timbre: "bell", gain: -26, octave: 5, mode: "sparse", rate: 4 },
         bass: { timbre: "bassPick", gain: -17, octave: 1, mode: "root" },
       },
-      groove: { drums: "soft", swing: 0.08 },
+      groove: { drums: "soft", drumLevel: "light", swing: 0.08 },
       space: { reverb: 4.2, wet: 0.38, filter: 6200, chorus: 0.16, delay: 0.12 },
     },
     {
@@ -244,7 +262,7 @@
         bell: { timbre: "bell", gain: -28, octave: 5, mode: "sparse", rate: 2 },
         bass: { timbre: "bassRound", gain: -20, octave: 1, mode: "root" },
       },
-      groove: { drums: "none", swing: 0 },
+      groove: { drums: "soft", drumLevel: "none", swing: 0 },
       space: { reverb: 7.5, wet: 0.58, filter: 3600, chorus: 0.24, delay: 0.08 },
     },
     {
@@ -275,7 +293,7 @@
         bell: { timbre: "bell", gain: -25, octave: 5, mode: "arp", rate: 8 },
         bass: { timbre: "bassPick", gain: -15, octave: 1, mode: "pulse" },
       },
-      groove: { drums: "pop", swing: 0.05 },
+      groove: { drums: "pop", drumLevel: "standard", swing: 0.05 },
       space: { reverb: 2.6, wet: 0.26, filter: 7600, chorus: 0.34, delay: 0.16 },
     },
     {
@@ -305,7 +323,7 @@
         bell: { timbre: "bell", gain: -30, octave: 5, mode: "sparse", rate: 2 },
         bass: { timbre: "bassRound", gain: -19, octave: 1, mode: "root" },
       },
-      groove: { drums: "none", swing: 0.1 },
+      groove: { drums: "soft", drumLevel: "none", swing: 0.1 },
       space: { reverb: 5, wet: 0.44, filter: 3400, chorus: 0.2, delay: 0.12 },
     },
     {
@@ -336,7 +354,7 @@
         bell: { timbre: "bell", gain: -26, octave: 5, mode: "arp", rate: 8 },
         bass: { timbre: "bassPick", gain: -14, octave: 1, mode: "walk" },
       },
-      groove: { drums: "citypop", swing: 0.08 },
+      groove: { drums: "citypop", drumLevel: "standard", swing: 0.08 },
       space: { reverb: 3, wet: 0.3, filter: 6800, chorus: 0.3, delay: 0.18 },
     },
     {
@@ -366,8 +384,72 @@
         bell: { timbre: "electricPiano", gain: -20, octave: 4, mode: "block", rate: 1 },
         bass: { timbre: "bassRound", gain: -17, octave: 1, mode: "root" },
       },
-      groove: { drums: "none", swing: 0.04 },
+      groove: { drums: "soft", drumLevel: "none", swing: 0.04 },
       space: { reverb: 6.5, wet: 0.5, filter: 4000, chorus: 0.18, delay: 0.12 },
+    },
+    {
+      id: "brisk",
+      name: "疾走",
+      en: "brisk",
+      blurb: "稳稳的四拍底鼓，踩镲落在反拍上，推着人往前走。",
+      character: "稳、向前、不拖沓",
+      when: ["morning", "afternoon", "evening"],
+      moods: ["开心", "专注", "平静"],
+      scenes: ["walking"],
+      energy: ["中高", "高"],
+      bpm: [122, 148],
+      density: [0.55, 0.8],
+      keys: ["C", "G", "D", "A"],
+      progressions: [
+        ["1maj7", "5add9", "6min7", "4maj7"],
+        ["1maj7", "4maj7", "5dom9", "6min7"],
+        ["6min7", "4maj7", "1maj7", "5dom9"],
+        ["4maj7", "1maj7", "5add9", "6min7"],
+        ["1maj7", "6min7", "4maj7", "5sus4"],
+      ],
+      barsPerChord: 2,
+      voices: {
+        keys: { timbre: "pluck", gain: -14, octave: 4, mode: "broken", rate: 8 },
+        pad: { timbre: "brightSynth", gain: -31, octave: 3, mode: "sustain" },
+        bell: { timbre: "bell", gain: -30, octave: 5, mode: "sparse", rate: 4 },
+        // walk 是引擎里专门为「走动感」写的演奏法：和弦音与级进过渡音交替，
+        // 而不是硬走音阶。走路场景用它，比单纯的每拍一下更像脚步。
+        bass: { timbre: "bassPick", gain: -15, octave: 1, mode: "walk" },
+      },
+      // 推荐档位给「强」而不是「标准」：走路最需要的是左右脚交替的那一下军鼓，
+      // 少了它步子容易跟不稳。
+      groove: { drums: "stride", drumLevel: "strong", swing: 0.02 },
+      space: { reverb: 2.2, wet: 0.22, filter: 7800, chorus: 0.14, delay: 0.1 },
+    },
+    {
+      id: "run",
+      name: "奔跑",
+      en: "run",
+      blurb: "密集的踩镲和硬底鼓，把脚步钉在拍子上。",
+      character: "强推、密集、不含糊",
+      when: ["morning", "afternoon", "evening"],
+      moods: ["兴奋", "开心"],
+      scenes: ["running"],
+      energy: ["中高", "高"],
+      bpm: [150, 180],
+      density: [0.7, 1],
+      keys: ["C", "G", "D", "A"],
+      progressions: [
+        ["1maj7", "5dom9", "6min7", "4maj7"],
+        ["6min7", "4maj7", "1maj7", "5dom9"],
+        ["1maj7", "4maj7", "6min7", "5dom9"],
+        ["4maj7", "5dom9", "1maj7", "6min7"],
+        ["1maj7", "6min7", "5dom9", "4maj7"],
+      ],
+      barsPerChord: 2,
+      voices: {
+        keys: { timbre: "brightSynth", gain: -17, octave: 4, mode: "broken", rate: 8 },
+        pad: { timbre: "softPad", gain: -34, octave: 3, mode: "sustain" },
+        // 故意没有 bell：跑起来的时候，飘在高处的铃音只会显得散。
+        bass: { timbre: "bassPick", gain: -14, octave: 1, mode: "pulse" },
+      },
+      groove: { drums: "run", drumLevel: "strong", swing: 0 },
+      space: { reverb: 1.8, wet: 0.18, filter: 8600, chorus: 0.12, delay: 0.08 },
     },
   ];
 
@@ -396,6 +478,11 @@
     return KEYS.includes(String(key || "").toUpperCase());
   }
 
+  /** 这个鼓点档位合法吗。合法值就是 DRUM_LEVELS 里的四个 id。 */
+  function isDrumLevel(value) {
+    return DRUM_LEVELS.some((level) => level.id === value);
+  }
+
   /** 全局节拍档位数：40–200 共 161 档。 */
   function tempoSteps() {
     return LIMITS.bpm[1] - LIMITS.bpm[0] + 1;
@@ -409,9 +496,15 @@
    * 解耦又收回去，那个数字会小看自己。
    *
    * 节奏量是连续量，没有「档位」可言，所以不参与计数；界面上单独说明。
+   * 鼓点档位是**离散的四档**，和调性、进行、节拍档位性质相同，因此计入。
    */
   function combinationCount(soundscape) {
-    return soundscape.keys.length * soundscape.progressions.length * tempoSteps();
+    return (
+      soundscape.keys.length *
+      soundscape.progressions.length *
+      tempoSteps() *
+      DRUM_LEVELS.length
+    );
   }
 
   /** 全库统计：音景数、和声进行总数、组合总数。用于界面上诚实地说清「程序库有多大」。 */
@@ -435,7 +528,12 @@
   /** 某条轴的推荐区间，供界面高亮与「超出推荐」提示使用。 */
   function recommendFor(id) {
     const soundscape = get(id) || SOUNDSCAPES[0];
-    return { bpm: soundscape.bpm.slice(), density: soundscape.density.slice() };
+    return {
+      bpm: soundscape.bpm.slice(),
+      density: soundscape.density.slice(),
+      // 鼓点没有「区间」，只有一个推荐档位——它是离散的四选一。
+      drums: soundscape.groove.drumLevel,
+    };
   }
 
   /** 某个值是否落在推荐区间内。 */
@@ -449,13 +547,22 @@
   /**
    * 后端只给 id / BPM / 节奏量；这里补全成引擎能直接演奏的完整配方。
    *
-   * 三个入参的处理原则一致：**给了就用（只要不越全局硬边界），没给就取
-   * 推荐区间的中点**。`key` 与 `progressionIndex` 为 null 时交给引擎按
-   * 种子随机挑，这样同一条配方在不同休息点会落到不同调性上。
+   * 入参的处理原则一致：**给了就用（只要不越全局硬边界），没给就取推荐值**。
+   * `key`、`progressionIndex`、`drums` 为 null 时表示「没指定」——调性交给
+   * 引擎按种子随机挑（同一条配方在不同休息点会落到不同调性上），鼓点则
+   * 回落到该音景自己的推荐档位。
    */
   function resolve(
     id,
-    { bpm, density, seed = 0, intensity = 0.5, key = null, progressionIndex = null } = {}
+    {
+      bpm,
+      density,
+      seed = 0,
+      intensity = 0.5,
+      key = null,
+      progressionIndex = null,
+      drums = null,
+    } = {}
   ) {
     const soundscape = get(id) || SOUNDSCAPES[0];
     const targetBpm =
@@ -467,6 +574,7 @@
       Number.isInteger(progressionIndex) && progressionIndex >= 0
         ? progressionIndex % soundscape.progressions.length
         : null;
+    const targetDrums = isDrumLevel(drums) ? String(drums) : null;
     return {
       soundscape,
       bpm: targetBpm,
@@ -475,6 +583,7 @@
       intensity,
       key: targetKey,
       progressionIndex: targetProgression,
+      drums: targetDrums,
     };
   }
 
@@ -489,8 +598,10 @@
     clampBpm,
     clampDensity,
     isValidKey,
+    isDrumLevel,
     LIMITS,
     KEYS,
+    DRUM_LEVELS,
     timbres: TIMBRE,
   };
 })();

@@ -6,7 +6,7 @@
 * 目录完整性与 API 输出契约；
 * ``select_soundscape`` 的确定性与同分时的字典序 tie-break；
 * ``explicit`` 命中已知 id 直接返回、未知 id 忽略；
-* ``bpm_for`` 的返回值必须落在所属音景的 bpm_range 内（参数化遍历全部 8 个音景）；
+* ``bpm_for`` 的返回值必须落在所属音景的 bpm_range 内（参数化遍历全部 10 个音景）；
 * 压力高 / 精力低取下沿，精力高取上沿；
 * ``energy_label`` 对数值、中文标签、英文别名与脏输入的处理。
 """
@@ -28,8 +28,8 @@ from music_companion.soundscape import (
 class SoundscapeCatalogTests(unittest.TestCase):
     """音景目录本身的结构约束。"""
 
-    def test_目录含八个音景且元信息完整(self):
-        self.assertEqual(len(SOUNDSCAPES), 8)
+    def test_目录含十个音景且元信息完整(self):
+        self.assertEqual(len(SOUNDSCAPES), 10)
         for sid, scape in SOUNDSCAPES.items():
             with self.subTest(sid=sid):
                 self.assertEqual(sid, scape.id)
@@ -76,8 +76,15 @@ class SelectSoundscapeTests(unittest.TestCase):
             select_soundscape(time_context="早晨", mood="专注", scene="久坐", energy="低"),
             "first-light",
         )
+        # 午后 + 开心 + 行走 + 高精力：归途与疾走同为 8 分，字典序取 brisk。
+        # 这正是「跟着鼓点走」想要的结果——走路场景优先给走路写的音景。
         self.assertEqual(
             select_soundscape(time_context="午后", mood="开心", scene="行走", energy="高"),
+            "brisk",
+        )
+        # 归途仍然凭「通勤」标签在自己的场景里唯一最高分（疾走没有这个标签）
+        self.assertEqual(
+            select_soundscape(time_context="晚间", mood="开心", scene="通勤", energy="中"),
             "way-home",
         )
         self.assertEqual(
@@ -88,6 +95,15 @@ class SelectSoundscapeTests(unittest.TestCase):
             select_soundscape(time_context="上午", mood="专注", scene="久坐", energy="中"),
             "desk-hours",
         )
+
+    def test_跑步场景只由跑步音景命中(self):
+        # 跑步标签只挂在 run 上：它是「出去跑一段」专用的，不该被别的场景借走
+        self.assertEqual(
+            select_soundscape(time_context="早晨", mood="兴奋", scene="跑步", energy="高"),
+            "run",
+        )
+        self.assertIn("跑步", SOUNDSCAPES["run"].scenes)
+        self.assertNotIn("跑步", SOUNDSCAPES["brisk"].scenes)
 
     def test_同分时按id字典序取最小(self):
         # 晚间 + 低落 + 通用 + 中精力：breath / night-lamp / settling 三家同分（均为 6 分），

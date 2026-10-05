@@ -2,9 +2,9 @@
 
 这个应用没有音频文件：每一段音乐都是前端 ``static/js/engine.js`` 用 Web Audio
 现算出来的，随机的部分由种子驱动，所以**同一个配方永远得到同一段音乐**。
-「收藏一首好听的曲子」于是不需要保存任何音频，只要把这七个字段记下来：
+「收藏一首好听的曲子」于是不需要保存任何音频，只要把这八个字段记下来：
 
-    styleId / bpm / density / key / progressionIndex / seed / name
+    styleId / bpm / density / key / progressionIndex / drums / seed / name
 
 这就是本模块存在的理由——盘上存的是配方，不是 mp3。由此得到两条贯穿全篇的约束：
 
@@ -30,14 +30,21 @@ from typing import Any
 from uuid import UUID, uuid5
 
 
-# 8 个音景 id，与 soundscape.SOUNDSCAPES 的键逐字一致。这里刻意另存一份而不是
+# 10 个音景 id，与 soundscape.SOUNDSCAPES 的键逐字一致。这里刻意另存一份而不是
 # import 那边：白名单属于**存储格式**的一部分，将来某个音景从目录里下架时，用户
 # 早先的收藏必须还能读出来，不能因为目录变了就把人家的曲子判成非法数据。
 # 代价是新增音景时要同步这里，漏了会让新音景的配方存不进来。
 STYLE_IDS = frozenset({
     "first-light", "desk-hours", "after-rain", "breath",
     "high-noon", "night-lamp", "way-home", "settling",
+    "brisk", "run",
 })
+
+# 鼓点档位，与前端 soundscapes.js 的 DRUM_LEVELS、engine.js 的 DRUM_LAYERS 逐字对应。
+# 和 STYLE_IDS 同理：这是存储格式的一部分，写在盘上的旧收藏不能因为前端改了档位
+# 名称就读不出来。None 表示「不指定」——由音景自己的推荐档位决定，语义与 key 的
+# null 一致。
+DRUM_LEVELS = frozenset({"none", "light", "standard", "strong"})
 
 # 12 个调名，逐字抄自 theory.js 的 PITCH_CLASSES。那边是 `String(key).toUpperCase()`
 # 后查表，所以这里也先大写再比对；但注意只有升号拼法，降号（如 "Bb"）在 theory.js
@@ -183,6 +190,15 @@ def normalize_recipe(payload: dict) -> dict[str, Any]:
         if progression_index < 0:
             raise ValueError("progressionIndex 不能是负数")
 
+    # 鼓点同样认空串：null 表示「跟音景的推荐档位走」，与 key 的 null 是同一套语义。
+    raw_drums = payload.get("drums")
+    if raw_drums is None or not str(raw_drums).strip():
+        drums = None
+    else:
+        drums = str(raw_drums).strip().lower()
+        if drums not in DRUM_LEVELS:
+            raise ValueError(f"未知鼓点档位：{raw_drums}")
+
     seed = _as_int(payload.get("seed", 0), "seed")
     if not 0 <= seed <= SEED_MAX:
         raise ValueError(f"seed 必须在 0 到 {SEED_MAX} 之间")
@@ -193,6 +209,7 @@ def normalize_recipe(payload: dict) -> dict[str, Any]:
         "density": density,
         "key": key_name,
         "progressionIndex": progression_index,
+        "drums": drums,
         "seed": seed,
         "name": _clean_text(payload.get("name"), limit=NAME_MAX, field="名字", fallback=DEFAULT_NAME),
     }
@@ -211,6 +228,7 @@ def _fingerprint_id(recipe: dict[str, Any]) -> str:
         f"{recipe['density']:.4f}",
         recipe["key"] or "-",
         "-" if recipe["progressionIndex"] is None else str(recipe["progressionIndex"]),
+        recipe["drums"] or "-",
         str(recipe["seed"]),
     )
     return str(uuid5(PLAYLIST_NAMESPACE, ":".join(parts)))
@@ -219,7 +237,7 @@ def _fingerprint_id(recipe: dict[str, Any]) -> str:
 def recipe_id(payload: dict) -> str:
     """配方 → 稳定 id。
 
-    参与指纹的只有决定声音的六个字段，**名字与备注不算**：同一段音乐换个名字再收藏
+    参与指纹的只有决定声音的七个字段，**名字与备注不算**：同一段音乐换个名字再收藏
     仍然是同一段音乐，应该命中已有条目，而不是多出一条。传未规范化的原始配方也行，
     内部先过一遍 :func:`normalize_recipe`（它对已规范化的输入是幂等的）。
     """
@@ -235,6 +253,7 @@ def _build_entry(recipe: dict[str, Any], *, note: str, created_at: str) -> "Play
         density=recipe["density"],
         key=recipe["key"],
         progression_index=recipe["progressionIndex"],
+        drums=recipe["drums"],
         seed=recipe["seed"],
         name=recipe["name"],
         created_at=created_at,
@@ -244,7 +263,7 @@ def _build_entry(recipe: dict[str, Any], *, note: str, created_at: str) -> "Play
 
 @dataclass(frozen=True)
 class PlaylistEntry:
-    """一条收藏：决定声音的六个字段 + 用户起的名字 + 可选备注 + 服务端时间戳。
+    """一条收藏：决定声音的七个字段 + 用户起的名字 + 可选备注 + 服务端时间戳。
 
     构造即校验（与 ``CalendarEvent`` 同一套路），所以盘上读回来的条目和刚写进去的
     条目走的是同一套规则；字段名在 Python 侧用 snake_case，出门一律 camelCase。
@@ -256,6 +275,7 @@ class PlaylistEntry:
     density: float
     key: str | None
     progression_index: int | None
+    drums: str | None
     seed: int
     name: str
     created_at: str
@@ -274,6 +294,8 @@ class PlaylistEntry:
             raise ValueError(f"未知调性：{self.key}")
         if self.progression_index is not None and self.progression_index < 0:
             raise ValueError("progressionIndex 不能是负数")
+        if self.drums is not None and self.drums not in DRUM_LEVELS:
+            raise ValueError(f"未知鼓点档位：{self.drums}")
         if not 0 <= self.seed <= SEED_MAX:
             raise ValueError(f"seed 必须在 0 到 {SEED_MAX} 之间")
         if not self.name.strip() or len(self.name) > NAME_MAX:
@@ -300,6 +322,7 @@ class PlaylistEntry:
             density=recipe["density"],
             key=recipe["key"],
             progression_index=recipe["progressionIndex"],
+            drums=recipe["drums"],
             seed=recipe["seed"],
             name=_clean_text(recipe["name"], limit=NAME_MAX, field="名字", fallback=DEFAULT_NAME, truncate=True),
             created_at=str(value.get("createdAt") or ""),
@@ -315,6 +338,7 @@ class PlaylistEntry:
             "density": self.density,
             "key": self.key,
             "progressionIndex": self.progression_index,
+            "drums": self.drums,
             "seed": self.seed,
             "name": self.name,
             "note": self.note,

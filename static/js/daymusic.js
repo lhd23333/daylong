@@ -52,10 +52,17 @@
     [/睡|躺下|晚安|入睡|sleep/i, "night-lamp"],
     [/考|测验|exam|面试|答辩/i, "breath"],
     [/呼吸|冥想|闭眼|午休|小憩|放空/, "breath"],
-    [/跑|球|游泳|健身|锻炼|体育|体测|运动/, "high-noon"],
-    [/通勤|路上|公交|地铁|骑车|走一|散步|回家/, "way-home"],
+    // 跑和走各自单独成条，且都排在「运动」和「通勤」前面：这两个是唯一
+    // **音乐直接决定步频**的场景，配错等于把人的步子带偏。球/游泳/健身这些
+    // 动作跟拍子没关系，继续走原来那条。
+    // 末尾那个光杆「跑」是给对话入口留的：agent 常把标题收成「操场跑」这种
+    // 说法，只认「跑步」的话，它排的跑步会被配成一首 121 拍的午后。
+    [/跑步|慢跑|长跑|晨跑|夜跑|马拉松|体测|跑步机|跑|jogging|jog|running/i, "run"],
+    [/散步|走路|走一|遛弯|遛狗|饭后走|漫步/, "brisk"],
+    [/球|游泳|健身|锻炼|体育|运动/, "high-noon"],
+    [/通勤|路上|公交|地铁|骑车|回家/, "way-home"],
     [/晚[饭餐]|午餐|午饭|吃饭|食堂|加餐/, "after-rain"],
-    [/早[饭餐]|起床|晨读|晨跑|morning/i, "first-light"],
+    [/早[饭餐]|起床|晨读|morning/i, "first-light"],
     [/洗澡|收拾|整理|日记|总结|复盘|静一静|发呆/, "settling"],
     [/写|作业|复习|预习|背|读|看书|自习|上机|练习|study|work|课/i, "desk-hours"],
   ];
@@ -102,6 +109,10 @@
    *        date 只影响种子（同一天恒定）；energy/stress 是当天的状态快照，
    *        有就把曲子往「还有力气」或「该松一点」的方向推一把。
    * @returns {object|null} {soundscapeId, bpm, density, key, progressionIndex, seed, why}
+   *
+   * 注意配方里**不带 `drums`**：鼓点交给音景自己的推荐档位（`groove.drumLevel`），
+   * 用户想改就到休息页的鼓点行改。在这里钉死会把「自动」变成一句假话——推导出来
+   * 的曲子应该保持可调，而不是替用户把四个档位选完。
    */
   function recipeFor(item, options = {}) {
     const library = window.MCSoundscapes;
@@ -183,6 +194,14 @@
       notes.push("今天电量不高，留白多一点");
     } else if (Number.isFinite(energy) && energy >= 75 && minutes > 0 && minutes <= 30) {
       density += 0.06;
+    }
+
+    // 鼓点不在这里挑——它跟着音景的推荐档位走（soundscapes.js 的 groove.drumLevel）。
+    // 但「跟着鼓点走」正是走 / 跑两个音景存在的理由，说明句里得点出来，否则用户
+    // 只看到「配了一首曲子」，看不出节奏是特意加上去的。只有最重的一档才说这句：
+    // 轻档打不出「踩得住」的效果，说了就是骗人。
+    if (soundscape.groove.drumLevel === "strong") {
+      notes.push("鼓点打满，步子能跟着踩");
     }
 
     // ── 调性与和声：哈希决定，但锁在音景自己的推荐里 ──

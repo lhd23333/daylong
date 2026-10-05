@@ -20,12 +20,66 @@
   const BARS_PER_PROGRESSION_PASS = 16;
 
   // 鼓组以「一小节 = 16 个十六分音符」为网格，直接写命中位置，比字符串好数。
+  // 这里只写**律动性格**（重音落在哪几格），打几层由档位决定，见 DRUM_LAYERS。
   const DRUM_PATTERNS = {
     lofi: { kick: [0, 6, 10], snare: [4, 12], hat: [2, 6, 10, 14], level: 0.5 },
     soft: { kick: [0, 8], snare: [12], hat: [4, 12], level: 0.36 },
     pop: { kick: [0, 4, 8, 12], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], level: 0.46 },
     citypop: { kick: [0, 3, 7, 8, 11], snare: [4, 12], hat: [2, 6, 10, 14], level: 0.44 },
+    // 走路：正拍四平八稳地踩，踩镲全部落在反拍（每拍的「和」）上。抬脚落在
+    // 底鼓、落脚落在踩镲，这是最简单也最经得住长时间循环的「脚步网格」。
+    stride: { kick: [0, 4, 8, 12], snare: [4, 12], hat: [2, 6, 10, 14], level: 0.5 },
+    // 跑步：踩镲铺满全部十六分格（一秒十几次），密度本身就推着步频往上走；
+    // 重音落在偶数格（八分位）上，奇数格减到 0.62，形成「咚-嗒-咚-嗒」的
+    // 前后脚交替。底鼓保持四拍全踩，不然跑起来会飘。
+    run: {
+      kick: [0, 4, 8, 12],
+      snare: [4, 12],
+      hat: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      level: 0.56,
+    },
   };
+
+  /**
+   * 鼓点档位 → 允许发声的层。这是和调性、和声进行平级的第四条自由轴：
+   * 音景决定律动性格，用户决定打几层。
+   *
+   * 同一条节奏型，「轻」和「强」是完全不同的推动力——前者像秒针，后者
+   * 能踩着走路。这是「加不加鼓」之外更细的一层，也是用户抱怨「节奏感不够」
+   * 时最直接的解法。
+   */
+  const DRUM_LAYERS = {
+    none: { kick: false, snare: false, hat: false },
+    light: { kick: false, snare: false, hat: true },
+    standard: { kick: true, snare: false, hat: true },
+    strong: { kick: true, snare: true, hat: true },
+  };
+
+  // 三层鼓的基础音量（dB）。写成常量而不是散在两处：buildDrums 建节点时设一次，
+  // applyDrumMix 按强度和档位再算一次，早先两边各写各的数字，改了一处会被另一处
+  // 悄悄覆盖回去（表现为「改了没生效」）。
+  //
+  // 踩镲从 -32 提到 -28：它是走路/跑步场景里真正标出「脚步格子」的那一层，
+  // 埋在铺底下面等于没有；而且 brown 噪声的军鼓本来就比白噪声的镲片更暗，
+  // 不可能靠拉低镲来给军鼓让路。
+  const DRUM_BASE_VOLUME = { kick: -12, snare: -26, hat: -28 };
+
+  /**
+   * 档位带来的整体音量差（dB）。**层数不等于响度**：只加层不加音量的话，
+   * 「强」和「标准」在整段音乐里差不到 1 dB，名字叫强却听不出来
+   * （实测：三层全上时整段音乐的宽带能量只比无鼓高 0.62 dB）。
+   *
+   * 所以「强」在这里额外抬一档——走路/跑步要的就是这个能被听见的推力；
+   * 「轻」保持克制，它的角色是秒针，不是鼓。
+   */
+  const DRUM_LEVEL_GAIN_DB = { none: 0, light: 0, standard: 0, strong: 7 };
+
+  /** 鼓点滑杆（0–1）→ dB。70% 是 0 dB，往上到 +3.1，往下到静音。 */
+  function drumVolumeToDb(value) {
+    const level = Math.max(0, Math.min(1, Number(value) || 0));
+    if (level <= 0.02) return -80;
+    return 20 * Math.log10(level / 0.7);
+  }
 
   /** 确定性伪随机数：同种子 → 同序列。 */
   function mulberry32(seed) {
@@ -64,7 +118,8 @@
       this.fadeToken = 0;
       this.armed = false;
       this.muted = false;
-      this.volume = 0.7;
+      this.volume = 0.62; // 音乐音量。比原来低一档：实测音乐一直压着鼓点
+      this.drumVolume = 0.85; // 鼓点音量。默认略高于音乐，让拍子站到前面
     }
 
     // ── 对外接口 ──────────────────────────────────────────────
@@ -113,7 +168,8 @@
 
     /**
      * 开始演奏，或在不中断声音的前提下切到另一个音景。
-     * @param {{soundscapeId?:string, bpm?:number, intensity?:number, seed?:number}} request
+     * @param {{soundscapeId?:string, bpm?:number, density?:number, intensity?:number,
+     *   seed?:number, key?:string, progressionIndex?:number, drums?:string}} request
      * @param {{crossfade?:number}} [opts]
      */
     async play(request = {}, opts = {}) {
@@ -126,6 +182,7 @@
         seed: request.seed ?? 0,
         key: request.key,
         progressionIndex: request.progressionIndex,
+        drums: request.drums,
       });
 
       const sameSoundscape =
@@ -159,6 +216,9 @@
       this.rng = mulberry32(seedFrom(`${recipe.soundscape.id}:${recipe.seed}:${recipe.bpm}`));
       this.nodes = this.assemble(recipe);
       this.nodes.chain.master.gain.value = 0;
+      // buildDrums 只给了基础音量，档位那一档增益得在这里补上——play() 起新音景
+      // 不会走 applyIntensity()，漏了这句的话「强」只有多出来的两层，没有音量。
+      this.applyDrumMix();
 
       // 速度一步到位，不做渐变：Tone 在速度渐变期间秒↔tick 的换算不再是
       // 线性的，此时去排事件会把时间点算错。
@@ -339,6 +399,27 @@
       this.enter();
     }
 
+    /**
+     * 换鼓点档位。传 null / 非法值 = 解除钉住，回落到音景自己的推荐档位。
+     *
+     * 不用重建链路，也不用 enter()：鼓点是整小节一次性排期的，本小节已经
+     * 排出去的鼓改不了，下一小节自然读到新档位。所以点完最迟一小节内听到
+     * 变化——这也符合「打点」这件事的直觉，总不会有人指望鼓点从半拍中间
+     * 换掉。
+     */
+    setDrums(value) {
+      if (!this.recipe) return;
+      this.recipe.drums = Library.isDrumLevel(value) ? String(value) : null;
+      // 音量立刻渐变过去，打几层等下一小节——听感上是「鼓变响了」而不是「啪一下
+      // 换了套鼓」，中间不会出现半小节的空档。
+      this.applyDrumMix();
+    }
+
+    currentDrums() {
+      if (!this.recipe) return null;
+      return this.recipe.drums || this.recipe.soundscape.groove.drumLevel || "none";
+    }
+
     /** 指定和声进行。传 null 表示交回种子随机。 */
     setProgression(index) {
       if (!this.recipe) return;
@@ -355,12 +436,19 @@
       if (this.nodes) this.nodes.chain.master.gain.rampTo(this.muted ? 0 : this.targetGain(), 0.35);
     }
 
-    /** 总音量 0–1。和 setMuted 分开：静音不该丢掉用户调好的音量。 */
+    /** 音乐音量 0–1（只作用于旋律声部，鼓点有自己的滑杆）。 */
     setVolume(value) {
       this.volume = Math.max(0, Math.min(1, Number(value) || 0));
-      if (this.nodes && !this.muted) {
-        this.nodes.chain.master.gain.rampTo(this.targetGain(), 0.2);
-      }
+      if (this.nodes) this.nodes.chain.bus.gain.rampTo(this.volume, 0.2);
+    }
+
+    /**
+     * 鼓点音量 0–1，70% 即 0 dB 基准。和音乐音量分开是刻意的：用户抱怨
+     * 「音乐盖过鼓点」时，能立刻自己拧回来，而不是只能整体调小。
+     */
+    setDrumVolume(value) {
+      this.drumVolume = Math.max(0, Math.min(1, Number(value) || 0));
+      this.applyDrumMix();
     }
 
     /**
@@ -454,7 +542,10 @@
       });
       // 延迟走一条独立支路再汇入混响，避免干声被重复叠加。
       const delay = new Tone.FeedbackDelay({ delayTime: "8n.", feedback: 0.24, wet: space.delay });
-      const bus = new Tone.Gain(0.9);
+      // 音乐总线：**音乐音量滑杆就挂在这个节点上**。它和鼓组总线是并列的
+      // 两条路，各自被自己的滑杆控制——「音乐太大盖过鼓点」这件事，用户自己
+      // 就能拧回来，不必等我们改代码。
+      const bus = new Tone.Gain(this.volume);
       const meter = new Tone.Meter({ smoothing: 0.85 });
       // 256 段而不是 64：低频那几个 bin 挤在一起，64 段画出来的频谱
       // 左边一坨、右边空荡。分辨率高一点，前端才有余量做对数分频。
@@ -514,27 +605,45 @@
 
     buildDrums() {
       const Tone = window.Tone;
+      // 底鼓：低、短、有芯。decay 0.34→0.26、octaves 5→4 是往「积极」调：
+      // 同样音量下，拖长尾巴听起来是「咚——」（闷），收短了才是「咚！」（推人）。
       const kick = new Tone.MembraneSynth({
-        pitchDecay: 0.035,
-        octaves: 5,
+        pitchDecay: 0.03,
+        octaves: 4,
         oscillator: { type: "sine" },
-        envelope: { attack: 0.002, decay: 0.34, sustain: 0.01, release: 0.5 },
+        envelope: { attack: 0.001, decay: 0.26, sustain: 0.01, release: 0.3 },
       });
+      // 军鼓：原先用 brown 噪声——那是噪声里最暗的一种，再叠低通就是一团闷响。
+      // 换白噪声 + 300 Hz 高通，留下的是「啪」而不是「噗」。
       const snare = new Tone.NoiseSynth({
-        noise: { type: "brown" },
-        envelope: { attack: 0.002, decay: 0.13, sustain: 0 },
+        noise: { type: "white" },
+        envelope: { attack: 0.001, decay: 0.09, sustain: 0 },
       });
+      // 踩镲：咔哒声全在 8 kHz 以上。原来它过的是 7 kHz **低通**，等于把唯一
+      // 能「咔」的那一段先砍掉，只剩噪声的低频尾巴——这是「闷」的根。现在反
+      // 过来：6 kHz 高通，衰减收到 20 ms，短才脆。
       const hat = new Tone.NoiseSynth({
         noise: { type: "white" },
-        envelope: { attack: 0.001, decay: 0.035, sustain: 0 },
+        envelope: { attack: 0.0005, decay: 0.02, sustain: 0 },
       });
-      kick.volume.value = -12;
-      snare.volume.value = -26;
-      hat.volume.value = -32;
-      // 鼓组统一过一档低通，抹掉数字味的毛刺。
-      const glue = new Tone.Filter({ type: "lowpass", frequency: 7000, rolloff: -12 });
-      [kick, snare, hat].forEach((node) => node.connect(glue));
-      return { kick, snare, hat, glue };
+
+      // 三层各自整形：底鼓只要低频、军鼓砍掉胸腔以下、踩镲只留最上面一截。
+      // 原先三层共用一个 7 kHz 低通（"glue"），对底鼓无所谓，对踩镲是致命的。
+      const kickTone = new Tone.Filter({ type: "lowpass", frequency: 3800, rolloff: -12 });
+      const snareTone = new Tone.Filter({ type: "highpass", frequency: 280, rolloff: -12 });
+      const hatTone = new Tone.Filter({ type: "highpass", frequency: 6000, rolloff: -12 });
+      kick.volume.value = DRUM_BASE_VOLUME.kick;
+      snare.volume.value = DRUM_BASE_VOLUME.snare;
+      hat.volume.value = DRUM_BASE_VOLUME.hat;
+      kick.connect(kickTone);
+      snare.connect(snareTone);
+      hat.connect(hatTone);
+
+      // 鼓组总线。它（而不是每一层）承担「档位增益 + 用户滑杆」，于是「鼓点多响」
+      // 只有一个旋钮，不会出现三处各调一点、加起来听不出谁说了算。
+      const drumGain = new Tone.Volume(0);
+      [kickTone, snareTone, hatTone].forEach((node) => node.connect(drumGain));
+      return { kick, snare, hat, kickTone, snareTone, hatTone, drumGain };
     }
 
     assemble(recipe) {
@@ -548,7 +657,12 @@
         voices[name] = voice;
       });
       const drums = this.buildDrums();
-      drums.glue.connect(chain.bus);
+      // 鼓组直接进 master，**绕开音乐那条链**。两个理由：
+      //   1) 那条链上的低通（space.filter，多数音景 7 kHz 上下）会把刚做出来的
+      //      高频咔哒声又砍回去，等于白改；
+      //   2) 合唱（wet 0.5）加在鼓上是把瞬态抹开，正是「鼓点不干脆」的另一半原因。
+      // 代价是鼓不带混响——对节拍来说这恰恰是好事：干才紧。
+      drums.drumGain.connect(chain.master);
       chain.bus.connect(chain.filter);
       return { chain, voices, drums };
     }
@@ -577,7 +691,9 @@
     targetGain() {
       const intensity = this.recipe ? this.recipe.intensity : 0.5;
       // 0.74 是长时间聆听的安全上限；强度只在 ±20% 内浮动。
-      return (0.5 + intensity * 0.24) * this.volume;
+      // 用户音量不在这里乘——音乐音量在 chain.bus、鼓点在 drums.drumGain，
+      // 两边各自独立（混在一起就分不开了，那正是这次要修的问题）。
+      return 0.5 + intensity * 0.24;
     }
 
     /**
@@ -604,13 +720,26 @@
       // 强度映射到「亮度」和「响度」：累了就关一点高频、收一点音量。
       this.nodes.chain.filter.frequency.rampTo(space.filter * (0.72 + intensity * 0.5), 0.8);
       this.nodes.chain.master.gain.rampTo(this.muted ? 0 : this.targetGain(), 0.8);
+      this.applyDrumMix();
+    }
+
+    /**
+     * 鼓的音量分两处，各管各的：
+     *   - 三层各自的 volume 只管**三层之间的配比**（底鼓厚、踩镲脆），加上
+     *     强度偏移——累了就把鼓整体收一点；
+     *   - 总线 drumGain 管**鼓组相对音乐有多响**，由「档位增益 + 用户滑杆」决定。
+     * 写成一处是因为它有四个触发源：拖节奏量、点鼓点芯片、拖鼓点滑杆、换音景。
+     */
+    applyDrumMix() {
+      if (!this.nodes || !this.nodes.drums) return;
       const drums = this.nodes.drums;
-      if (drums) {
-        const lift = -6 * (intensity - 0.5);
-        drums.kick.volume.rampTo(-12 + lift * 0.4, 0.5);
-        drums.snare.volume.rampTo(-26 + lift, 0.5);
-        drums.hat.volume.rampTo(-32 + lift * 1.4, 0.5);
-      }
+      const intensity = this.recipe ? this.recipe.intensity : 0.5;
+      const lift = -6 * (intensity - 0.5);
+      drums.kick.volume.rampTo(DRUM_BASE_VOLUME.kick + lift * 0.4, 0.5);
+      drums.snare.volume.rampTo(DRUM_BASE_VOLUME.snare + lift, 0.5);
+      drums.hat.volume.rampTo(DRUM_BASE_VOLUME.hat + lift * 1.4, 0.5);
+      const levelGain = DRUM_LEVEL_GAIN_DB[this.currentDrums()] || 0;
+      drums.drumGain.volume.rampTo(levelGain + drumVolumeToDb(this.drumVolume), 0.5);
     }
 
     // ── 内部：演奏 ────────────────────────────────────────────
@@ -765,26 +894,38 @@
       }
 
       // —— 鼓组 ——
+      // 性格来自音景（groove.drums，哪几格有重音），层数来自用户选的档位
+      // （recipe.drums）。用户没选过就是 null，回落到音景自己的推荐档位。
+      // 两层拆开才能同时有「同一条节奏型只留秒针」和「同一条节奏型全组上」。
       const pattern = DRUM_PATTERNS[soundscape.groove.drums];
-      if (pattern) {
+      const drumLevel = this.recipe.drums || soundscape.groove.drumLevel || "none";
+      const layers = DRUM_LAYERS[drumLevel] || DRUM_LAYERS.none;
+      if (pattern && (layers.kick || layers.snare || layers.hat)) {
         const drums = this.nodes.drums;
         const scale = 0.5 + intensity * 0.85;
-        pattern.kick.forEach((step) => {
-          drums.kick.triggerAttackRelease("C1", "8n", time + step * stepSeconds, pattern.level * scale);
-        });
-        pattern.snare.forEach((step) => {
-          drums.snare.triggerAttackRelease("16n", time + step * stepSeconds, pattern.level * scale * 0.8);
-        });
-        pattern.hat.forEach((step, index) => {
-          // 反拍踩镲轻一点、正拍重一点，这是 lo-fi 的基础律动。
-          const accent = index % 2 === 0 ? 1 : 0.62;
-          // 低节奏量时先砍反拍踩镲：它是鼓组里最不伤骨架、又最能听出「疏」
-          // 的一层。按比例抽掉底鼓会让律动直接塌掉，砍踩镲不会。
-          if (accent < 1 && density < 0.35) return;
-          drums.hat.triggerAttackRelease(
-            "32n", time + step * stepSeconds, pattern.level * scale * accent * 0.7
-          );
-        });
+        if (layers.kick) {
+          pattern.kick.forEach((step) => {
+            drums.kick.triggerAttackRelease("C1", "8n", time + step * stepSeconds, pattern.level * scale);
+          });
+        }
+        if (layers.snare) {
+          pattern.snare.forEach((step) => {
+            drums.snare.triggerAttackRelease("16n", time + step * stepSeconds, pattern.level * scale * 0.8);
+          });
+        }
+        if (layers.hat) {
+          pattern.hat.forEach((step, index) => {
+            // 反拍踩镲轻一点、正拍重一点，这是 lo-fi 的基础律动。跑步音景的
+            // 踩镲占满十六格，这条规则正好变成「八分位重、十六分位轻」。
+            const accent = index % 2 === 0 ? 1 : 0.62;
+            // 低节奏量时先砍反拍踩镲：它是鼓组里最不伤骨架、又最能听出「疏」
+            // 的一层。按比例抽掉底鼓会让律动直接塌掉，砍踩镲不会。
+            if (accent < 1 && density < 0.35) return;
+            drums.hat.triggerAttackRelease(
+              "32n", time + step * stepSeconds, pattern.level * scale * accent * 0.7
+            );
+          });
+        }
       }
 
       this.barIndex += 1;

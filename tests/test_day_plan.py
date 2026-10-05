@@ -167,6 +167,33 @@ class DayPlanBreakPlacementTests(unittest.TestCase):
         self.assertIn("180", item.reason)
         self.assertEqual(item.label, BREAK_TYPES["walk"]["label"])
 
+    def test_walk默认配能踩着走的疾走(self):
+        """「出去走一圈」要的不是「适合行走」这么宽泛的标签，而是能踩着走的拍子。
+
+        打分表给不了这个偏好：雨后与归途同样带「行走」，三者在时段/心情上打平，
+        最后只能靠 id 字典序分胜负——那等于随机。所以走这一类由 day_plan 直接钉住。
+        """
+        plan = build(LONG_BLOCK, day_end="18:00")
+        walks = [item for item in breaks(plan) if item.break_type == "walk"]
+        self.assertTrue(walks)
+        for item in walks:
+            self.assertEqual(item.soundscape, "brisk")
+
+    def test_累或压力大时walk不再推快走(self):
+        """状态差的时候被一首 120 拍的曲子推着快走只会更烦，交回打分表挑慢的。"""
+        plan = build(LONG_BLOCK, day_end="18:00", state=STRESSED_STATE)
+        walks = [item for item in breaks(plan) if item.break_type == "walk"]
+        self.assertTrue(walks)
+        for item in walks:
+            self.assertNotEqual(item.soundscape, "brisk")
+            # 仍然落在目录里，只是换了一首
+            self.assertIn(item.soundscape, SOUNDSCAPES)
+
+    def test_用户手动指定音景时压过walk默认(self):
+        plan = build(LONG_BLOCK, day_end="18:00", soundscape_hint="after-rain")
+        for item in breaks(plan):
+            self.assertEqual(item.soundscape, "after-rain")
+
     def test_窗口很小时改用eyes而不是walk(self):
         # 6 分钟空档：walk 要 20 分钟、stretch 要 10 分钟，都装不下 → eyes
         plan = build(TINY_GAP, day_end="11:00")

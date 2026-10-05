@@ -24,6 +24,7 @@ from .calendar_model import CalendarEvent, find_conflicts, validate_events
 from .companion import CareCard, compose_care
 from .soundscape import (
     DEFAULT_SOUNDSCAPE,
+    STRESS_HIGH,
     bpm_for,
     energy_label,
     select_soundscape,
@@ -260,6 +261,24 @@ def _scene_for_break(kind: str) -> str:
     return "行走" if kind == "walk" else "久坐"
 
 
+# 「出去走一圈」默认配哪首。休息点的音景本来是打分选出来的，但这件事对音乐的要求
+# 比「适合行走」更具体：它得有一根**能踩着走的拍子**。打分表给不了这个偏好——
+# 雨后与归途同样带「行走」标签，而雨后的「全天」在任何时段都拿满 3 分，最后只能
+# 靠 id 字典序分胜负。所以这里直接钉住疾走。
+#
+# 但累到不想动、或压力已经很高的时候不钉：那种时候被一首 120 拍的曲子推着快走
+# 只会更烦，交回打分表挑一首慢的（雨后 / 归途都带「行走」）。这是「场景智能默认」
+# 而不是「场景强制」的分界。
+WALK_SOUNDSCAPE = "brisk"
+
+
+def _walk_soundscape(*, energy: str, stress: float) -> str | None:
+    """走一圈默认给疾走；状态不好时返回 None，交回打分表。"""
+    if energy == "低" or stress >= STRESS_HIGH:
+        return None
+    return WALK_SOUNDSCAPE
+
+
 def _mood_from_state(state: StatusSnapshot | None) -> str:
     if state is None:
         return "平静"
@@ -465,12 +484,16 @@ def build_day(
     stress = _state_stress(state)
     break_items: list[TimelineItem] = []
     for candidate in candidates:
+        # 用户手动指定的一律优先；没指定且是「出去走一圈」，才用疾走兜底。
+        hint = soundscape_hint
+        if not hint and candidate.kind == "walk":
+            hint = _walk_soundscape(energy=energy, stress=stress)
         scape = select_soundscape(
             time_context=_time_context(candidate.start),
             mood=mood,
             scene=_scene_for_break(candidate.kind),
             energy=energy,
-            explicit=soundscape_hint,
+            explicit=hint,
         )
         spec = BREAK_TYPES[candidate.kind]
         break_items.append(TimelineItem(

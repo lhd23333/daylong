@@ -63,7 +63,7 @@ class PlaylistStoreTests(unittest.TestCase):
             PlaylistEntry(
                 id=recipe_id(recipe(seed=index)),
                 style_id="first-light", bpm=72, density=0.5, key="C",
-                progression_index=2, seed=index, name=f"第 {index} 首",
+                progression_index=2, drums=None, seed=index, name=f"第 {index} 首",
                 created_at="2026-10-05T00:00:00+00:00",
             ).to_dict()
             for index in range(MAX_ENTRIES)
@@ -141,16 +141,64 @@ class PlaylistStoreTests(unittest.TestCase):
 
     def test_省略的字段与显式默认值得到同一个指纹(self):
         trimmed = recipe()
+        # drums 本来就不在基础配方里：省略它必须等价于显式传 null
         for field in ("density", "key", "progressionIndex", "seed"):
             trimmed.pop(field)
         normalized = normalize_recipe(trimmed)
         self.assertEqual(normalized["density"], 0.5)
         self.assertIsNone(normalized["key"])
         self.assertIsNone(normalized["progressionIndex"])
+        self.assertIsNone(normalized["drums"])
         self.assertEqual(normalized["seed"], 0)
         # 「省略」与「显式写默认值」是同一段音乐，指纹必须一致，去重才认得出来
-        explicit = recipe(density=0.5, key=None, progressionIndex=None, seed=0)
+        explicit = recipe(density=0.5, key=None, progressionIndex=None, drums=None, seed=0)
         self.assertEqual(recipe_id(trimmed), recipe_id(explicit))
+
+    # ---------- 鼓点轴 ----------
+
+    def test_鼓点档位保存并原样读回(self):
+        store = self.open_store()
+        entry, created = store.add(recipe(drums="strong"))
+        self.assertTrue(created)
+        self.assertEqual(entry["drums"], "strong")
+        self.assertEqual(store.get(entry["id"])["drums"], "strong")
+        # 重新打开一次（走读盘路径）仍然是同一档
+        self.assertEqual(self.open_store().get(entry["id"])["drums"], "strong")
+
+    def test_鼓点缺省时不指定而不是默认打鼓(self):
+        # None 的语义是「跟音景的推荐档位走」，不是「无鼓」——这两件事在引擎里
+        # 走的是不同分支，存错了会让收藏回来时听到的不是当时那段。
+        normalized = normalize_recipe(recipe())
+        self.assertIsNone(normalized["drums"])
+        # 空串与缺省等价（前端表单没选时会传 ""）
+        self.assertIsNone(normalize_recipe(recipe(drums=""))["drums"])
+        self.assertIsNone(normalize_recipe(recipe(drums=None))["drums"])
+
+    def test_未知鼓点档位被拒绝(self):
+        for value in ("重", "heavy", "NONE!", 0):
+            with self.assertRaises(ValueError):
+                normalize_recipe(recipe(drums=value))
+        # 大小写与空格按白名单归一化，不产生第二个指纹
+        self.assertEqual(normalize_recipe(recipe(drums=" Strong "))["drums"], "strong")
+
+    def test_不同鼓点档位是两段不同的音乐(self):
+        # 鼓点参与指纹：同一组参数只换档位，必须存成两条，否则收藏「变强的那版」
+        # 会被判成重复而存不进去。
+        ids = {level: recipe_id(recipe(drums=level)) for level in ("none", "light", "standard", "strong")}
+        self.assertEqual(len(set(ids.values())), 4)
+        self.assertNotEqual(recipe_id(recipe(drums=None)), recipe_id(recipe(drums="none")))
+
+    def test_旧的收藏文件没有鼓点字段也能读出来(self):
+        """加字段不能把用户早先的收藏判成坏数据。"""
+        legacy = recipe()
+        entry, _ = self.open_store().add(legacy)
+        stored = json.loads(self.path.read_text(encoding="utf-8"))
+        for item in stored:
+            item.pop("drums", None)
+        self.write_raw(json.dumps(stored, ensure_ascii=False))
+        reopened = self.open_store()
+        self.assertEqual(len(reopened.list_entries()), 1)
+        self.assertIsNone(reopened.get(entry["id"])["drums"])
 
     # ---------- 校验 ----------
 
