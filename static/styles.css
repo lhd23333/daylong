@@ -1427,6 +1427,148 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   }
 }
 
+/* ── 对话（agent 入口） ───────────────────────────────── */
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  margin-bottom: 0.9rem;
+  padding: 0;
+  list-style: none;
+}
+
+/* 气泡只在自己那一侧留出余量，让「谁说的」一眼看出来；不用头像和尾巴，
+   那两样都是聊天软件的装饰，这里不需要。 */
+.bubble {
+  max-width: min(34rem, 92%);
+  padding: 0.7rem 0.95rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper-lift);
+  font-size: 0.9rem;
+  line-height: 1.7;
+}
+
+.bubble p {
+  margin: 0;
+}
+
+.bubble.from-me {
+  align-self: flex-end;
+  border-color: rgba(168, 85, 47, 0.22);
+  background: var(--clay-soft);
+  color: var(--ink);
+}
+
+.bubble.is-busy p {
+  color: var(--ink-3);
+}
+
+.plan-card {
+  margin-top: 0.75rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--line);
+}
+
+.plan-list {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plan-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.plan-time {
+  flex: none;
+  min-width: 6.4rem;
+  color: var(--ink-3);
+  font-size: 0.79rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-title {
+  font-size: 0.88rem;
+}
+
+.plan-music {
+  margin: 0.7rem 0 0;
+  color: var(--clay);
+  font-size: 0.83rem;
+}
+
+.plan-prefs,
+.plan-done {
+  margin: 0.4rem 0 0;
+  color: var(--ink-3);
+  font-size: 0.76rem;
+}
+
+.plan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+}
+
+.chat-try {
+  margin-bottom: 0.9rem;
+}
+
+.chat-try .panel-note {
+  margin: 0 0 0.45rem;
+}
+
+.chat-try[hidden] {
+  display: none;
+}
+
+.chat-write {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.6rem;
+  padding: 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper-lift);
+}
+
+.chat-write textarea {
+  flex: 1;
+  min-height: 2.9rem;
+  max-height: 9rem;
+  padding: 0.35rem 0.2rem;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.chat-write textarea:focus {
+  outline: none;
+}
+
+.chat-write .solid-btn {
+  flex: none;
+}
+
+#chat-note {
+  margin: 0.5rem 0 0;
+}
+
+#chat-reset {
+  margin-top: 0.7rem;
+}
+
 /* ── 窄屏 ─────────────────────────────────────────────── */
 
 @media (max-width: 620px) {

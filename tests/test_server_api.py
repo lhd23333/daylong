@@ -122,6 +122,31 @@ class ServerApiTests(unittest.TestCase):
         self.assertEqual(body['items'], [])
         self.assertTrue((Path(self.data_dir.name) / 'playlist.json').exists())
 
+    def test_agent_endpoint_returns_writable_events(self):
+        # 对话入口：读一段自由文本，返回的 events 必须能原样 POST 回日历——
+        # 前端就是这么用的（写进今天），两边对不上的话按钮会直接 400。
+        status, body = self.req('POST', '/api/agent', {
+            'text': '上午数学课，下午四点半去操场跑半小时',
+            'now': '2026-10-05T14:07:00+08:00',
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual([item['title'] for item in body['events']], ['数学课', '操场跑'])
+        self.assertEqual(body['music']['soundscape'], 'run')
+        self.assertIn('reply', body)
+        for item in body['events']:
+            status, created = self.req('POST', '/api/calendar/events', item)
+            self.assertEqual(status, 201)
+            self.assertEqual(created['event']['start'], item['start'])
+        # 同一个 server 实例被这个文件里所有用例共用，写完要清干净，
+        # 否则后面断言日程列表的用例会看见这几条。
+        for item in body['events']:
+            self.req('DELETE', f"/api/calendar/events/{item['id']}")
+
+    def test_agent_endpoint_rejects_empty_text(self):
+        status, body = self.req('POST', '/api/agent', {'text': '   '})
+        self.assertEqual(status, 400)
+        self.assertIn('error', body)
+
     def test_malformed_content_length_returns_json_400(self):
         from http.client import HTTPConnection
         connection = HTTPConnection('127.0.0.1', self.port, timeout=3)

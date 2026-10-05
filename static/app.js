@@ -1,10 +1,15 @@
 /*
  * 朝夕 · 前端
  *
- * 三块拼在一起：
+ * 四块拼在一起：
+ *   对话   —— 一层 agent 入口：说一段话，它排成日程并配好音乐
  *   今天   —— 关怀语 + 一整天的时间轴（日程 / 休息点 / 「现在」标尺）
  *   了解你 —— 状态、作息、日程、音乐偏好
- *   休息   —— 用 Tone.js 当场生成音乐，带频谱可视化
+ *   休息   —— 用 Tone.js 当场生成音乐，带频谱可视化（自主微调都在这页）
+ *
+ * 「对话」是入口，「休息」是手动那一层：同一件事既能一句话说清楚，也能自己
+ * 拧每一个旋钮——两层共用同一个引擎和同一份配方，不存在「AI 版」和「手动版」
+ * 两套音乐。
  *
  * 音乐部分不在这里：生成的活由 js/engine.js + js/soundscapes.js + js/theory.js
  * 干，这个文件只负责「什么时候放、放哪一段、界面上显示什么」。
@@ -415,6 +420,7 @@
         density: recipe.density,
         key: recipe.key,
         progressionIndex: recipe.progressionIndex,
+        drums: recipe.drums,
         seed: recipe.seed,
         context: label,
       });
@@ -649,6 +655,7 @@
       seed: options.seed ?? 0,
       key: options.key ?? null,
       progressionIndex: options.progressionIndex ?? null,
+      drums: options.drums ?? null,
     };
     await engine.play(app.lastRequest, { crossfade: options.crossfade ?? 1.6 });
     $("player-context").textContent = options.context || "手动挑的";
@@ -674,6 +681,7 @@
       seed: recipe.seed,
       key: recipe.key,
       progressionIndex: recipe.progressionIndex,
+      drums: recipe.drums,
     };
   }
 
@@ -963,6 +971,13 @@
       .join("·");
   }
 
+  /** 鼓点档位的中文名。查不到就写「自动」——宁可含糊，也不要露出一个裸 id。 */
+  function drumName(id) {
+    const levels = (window.MCSoundscapes && window.MCSoundscapes.DRUM_LEVELS) || [];
+    const level = levels.find((item) => item.id === id);
+    return level ? level.name : "自动";
+  }
+
   function renderTuning() {
     if (!$("key-chips")) return;
     const recipe = engine && engine.recipe;
@@ -986,9 +1001,13 @@
         const pinnedProgression =
           Number.isInteger(recipe.progressionIndex) &&
           recipe.soundscape.progressions[recipe.progressionIndex];
+        // 鼓点写**当下真正在打的档位**（没钉住时就是音景的推荐档位），和调性
+        // 一样写实值：面板收起后，这行小字要能替代面板本身。
+        const drums = engine.currentDrums();
         $("tune-summary").textContent = [
           engine.key ? `${engine.key} 调` : "调性自动",
           pinnedProgression ? progressionLabel(pinnedProgression) : "进行自动",
+          drums === "none" ? "无鼓点" : `鼓点${drumName(drums)}`,
           driver ? driver.name : "—",
         ].join(" · ");
       }
@@ -1020,6 +1039,27 @@
         )
         .join("");
 
+    // 鼓点：自动 + 四档。语法和调性那一行完全一样——音景推荐的档位标出来
+    // （is-suggested）但不锁死，「自动」就是回到那个推荐值。
+    const drumBox = $("drum-chips");
+    if (drumBox) {
+      const levels = (window.MCSoundscapes && window.MCSoundscapes.DRUM_LEVELS) || [];
+      const pinnedDrums = recipe ? recipe.drums : null;
+      const suggestedDrums = recipe ? recipe.soundscape.groove.drumLevel : null;
+      drumBox.innerHTML =
+        `<button type="button" class="chip${pinnedDrums ? "" : " is-on"}" data-drums="">自动</button>` +
+        levels
+          .map((level) => {
+            const on = pinnedDrums === level.id;
+            const mark = suggestedDrums === level.id ? " is-suggested" : "";
+            return (
+              `<button type="button" class="chip${on ? " is-on" : ""}${mark}" ` +
+              `data-drums="${esc(level.id)}" title="${esc(level.blurb)}">${esc(level.name)}</button>`
+            );
+          })
+          .join("");
+    }
+
     // 粒子：驱动规则由 particles.js 提供，没加载就整行留空。
     const particleBox = $("driver-chips");
     const drivers = (window.MCParticles && window.MCParticles.DRIVERS) || [];
@@ -1040,8 +1080,8 @@
   // ── 收藏 ─────────────────────────────────────────────────
   //
   // 存的是**配方**不是音频：因为整条合成链路都是确定性的（种子固定的伪随机
-  // 数），同一组 {音景, 节拍, 节奏量, 调性, 进行, 种子} 永远得到同一段音乐。
-  // 所以「收藏一首好听的曲子」就是存这六个字段——不占空间，也不怕文件丢。
+  // 数），同一组 {音景, 节拍, 节奏量, 调性, 进行, 鼓点, 种子} 永远得到同一段
+  // 音乐。所以「收藏一首好听的曲子」就是存这七个字段——不占空间，也不怕文件丢。
 
   /** 一条配方的身份。用于判断「现在放的这段是不是已经收藏过了」。 */
   function recipeKey(recipe) {
@@ -1052,6 +1092,7 @@
       Number(recipe.density).toFixed(3),
       recipe.key || "",
       Number.isInteger(recipe.progressionIndex) ? recipe.progressionIndex : "",
+      recipe.drums || "",
       recipe.seed,
     ].join("|");
   }
@@ -1087,6 +1128,7 @@
           progressionIndex: Number.isInteger(item.progressionIndex)
             ? item.progressionIndex
             : null,
+          drums: item.drums || null,
           seed: item.seed,
         },
       }));
@@ -1107,10 +1149,14 @@
     list.innerHTML = items
       .map((item) => {
         const recipe = item.__recipe;
+        // 鼓点写**实际会听到的档位**（没钉住就取音景的推荐值）：收藏列表里
+        // 用户认的是「那首能跟着走的」，写「自动」等于没说。
+        const drums = recipe.drums || recipe.soundscape.groove.drumLevel || "none";
         const parts = [
           `${recipe.bpm} BPM`,
           `节奏量 ${Math.round(recipe.density * 100)}%`,
           recipe.key ? `${recipe.key} 调` : "调性自动",
+          drums === "none" ? "无鼓点" : `鼓点${drumName(drums)}`,
         ];
         return `
         <li class="fav-item" data-fav="${esc(item.id)}">
@@ -1147,6 +1193,7 @@
           progressionIndex: Number.isInteger(recipe.progressionIndex)
             ? recipe.progressionIndex
             : null,
+          drums: recipe.drums || null,
           seed: recipe.seed,
           name: `${recipe.soundscape.name} · ${recipe.bpm} BPM`,
         },
@@ -1171,10 +1218,271 @@
 
   // ── 事件绑定 ──────────────────────────────────────────────
 
+  // ── 对话（agent 入口） ────────────────────────────────────
+  // 用户随便写一段话，后端 music_companion/agent.py 把它读成日程与音乐。
+  // 这一页只做三件事：把话收进去、把理解结果摊开、给两个去处——写进今天，
+  // 或者去休息页自己调。对话存在本地存储里，刷新不丢。
+
+  const CHAT_TURNS = 12; // 本地留存的条数（发给模型的上下文更短，见 ai_client.understand）
+  const chat = { turns: [], busy: false };
+
+  const CHAT_GREETING =
+    '<li class="bubble from-agent" id="chat-greeting">' +
+    "<p>我在。把今天的事说给我听，我排好时间，再把音乐配上。</p></li>";
+
+  function loadChat() {
+    if (Array.isArray(prefs.chat)) chat.turns = prefs.chat.slice(-CHAT_TURNS);
+  }
+
+  function saveChat() {
+    prefs.chat = chat.turns.slice(-CHAT_TURNS);
+    savePrefs();
+  }
+
+  function chatClock(iso) {
+    return clockOf(iso);
+  }
+
+  /** 一条 agent 回话：说的话 + 它排出来的东西。 */
+  function bubbleHtml(turn, index) {
+    if (turn.role === "user") {
+      return `<li class="bubble from-me"><p>${esc(turn.text)}</p></li>`;
+    }
+    return `<li class="bubble from-agent"><p>${esc(turn.text)}</p>${planCardHtml(turn.plan, index)}</li>`;
+  }
+
+  /**
+   * 排出来的东西：几件事 + 一段音乐 + 两个去处。
+   *
+   * 刻意不显示「置信度」「模型」「tokens」这类东西——用户要判断的是「排得对不对」，
+   * 不是「AI 有多聪明」。他自己看一眼时间就知道对不对。
+   */
+  function planCardHtml(plan, index) {
+    if (!plan) return "";
+    const rows = (plan.events || [])
+      .map(
+        (item) => `
+        <li>
+          <span class="plan-time">${esc(chatClock(item.start))}–${esc(chatClock(item.end))}</span>
+          <span class="plan-title">${esc(item.title)}</span>
+        </li>`
+      )
+      .join("");
+    const music = plan.music || {};
+    const scape = SCAPES && typeof SCAPES.get === "function" ? SCAPES.get(music.soundscape) : null;
+    const musicLine = scape
+      ? `听「${esc(scape.name)}」，${esc(String(music.bpm || ""))} BPM${
+          music.drums ? ` · 鼓点${esc(drumName(music.drums))}` : ""
+        }`
+      : "";
+    if (!scape && !rows) return "";
+    // 用户顺口提到的喜好单独说一句「记下了」——不然他说了「别太吵」却没看到
+    // 任何反应，会以为白说了。（不进 prefs.preferred：那个字段存的是音景 id。）
+    const prefs_ = plan.preferences || {};
+    const remembered = [
+      ...(prefs_.likes || []).map((item) => `喜欢${esc(item)}`),
+      ...(prefs_.avoids || []).map((item) => `不要${esc(item)}`),
+    ];
+    const note = plan.written ? '<p class="plan-done">已经写进今天了</p>' : "";
+    const prefsLine = remembered.length
+      ? `<p class="plan-prefs">记下了：${remembered.join("、")}</p>`
+      : "";
+    // 「听这段」写进去之后也要留着：刚排完的那一段，过一会儿还想听是常事。
+    const actions = `
+      <div class="plan-actions">
+        ${
+          plan.written
+            ? '<button type="button" class="ghost-btn" data-goto="today">去看看今天</button>'
+            : `<button type="button" class="solid-btn" data-plan-write="${index}">写进今天</button>`
+        }
+        <button type="button" class="ghost-btn" data-plan-listen="${index}">听这段</button>
+      </div>`;
+    return `<div class="plan-card">
+      ${rows ? `<ol class="plan-list">${rows}</ol>` : ""}
+      ${musicLine ? `<p class="plan-music">${musicLine}</p>` : ""}
+      ${prefsLine}
+      ${note}
+      ${actions}
+    </div>`;
+  }
+
+  function renderChat() {
+    const log = $("chat-log");
+    if (!log) return;
+    const busy = chat.busy ? '<li class="bubble from-agent is-busy"><p>正在读…</p></li>' : "";
+    log.innerHTML = `${CHAT_GREETING}${chat.turns.map(bubbleHtml).join("")}${busy}`;
+    $("chat-try").hidden = chat.turns.length > 0;
+    $("chat-reset").hidden = chat.turns.length === 0;
+    const last = log.lastElementChild;
+    if (last && typeof last.scrollIntoView === "function") last.scrollIntoView({ block: "nearest" });
+  }
+
+  async function sayToAgent(text) {
+    const message = String(text || "").trim();
+    if (!message || chat.busy) return;
+    chat.turns.push({ role: "user", text: message });
+    chat.busy = true;
+    saveChat();
+    renderChat();
+    $("chat-send").disabled = true;
+    try {
+      const result = await api("/api/agent", {
+        method: "POST",
+        body: {
+          text: message,
+          now: toLocalIso(new Date()),
+          history: chat.turns.slice(-6).map((turn) => ({ role: turn.role, text: turn.text })),
+        },
+      });
+      chat.turns.push({
+        role: "agent",
+        text: result.reply || "读完了。",
+        plan: {
+          events: result.events || [],
+          music: result.music || {},
+          state: result.state || {},
+          preferences: result.preferences || {},
+        },
+      });
+      showChatNote(result);
+    } catch (error) {
+      chat.turns.push({ role: "agent", text: `没读上：${error.message}` });
+    } finally {
+      chat.busy = false;
+      $("chat-send").disabled = false;
+      saveChat();
+      renderChat();
+      $("chat-input").value = "";
+    }
+  }
+
+  /**
+   * 输入框下面那行小字：这次是模型读的，还是本地规则读的。
+   *
+   * 和「休息」页的远端通路提示同一个道理——不配密钥也能完整演示，但得让人
+   * 知道这一句是谁读的，否则「怎么有时聪明有时笨」永远是个谜。
+   */
+  function showChatNote(result) {
+    const note = $("chat-note");
+    if (!note) return;
+    if (result.source === "ai") {
+      note.hidden = true;
+      note.textContent = "";
+      return;
+    }
+    note.hidden = false;
+    // 具体原因（HTTP 402、超时……）放进 title：查问题时用得上，摆在脸上只是
+    // 一行英文报错。这里只说清「这次是谁读的」——说清这一句，用户就明白了。
+    note.textContent = "这次用的是本地规则";
+    note.title = result.fallback_reason
+      ? `模型通道没接上：${result.fallback_reason}`
+      : "没配模型密钥也照样能用，见 .env.example";
+  }
+
+  /** 把 agent 排好的东西真正落到后端：日程、状态、记下来的偏好。 */
+  async function writePlan(index) {
+    const turn = chat.turns[index];
+    const plan = turn && turn.plan;
+    if (!plan || plan.written) return;
+    const button = document.querySelector(`[data-plan-write="${index}"]`);
+    if (button) button.disabled = true;
+    try {
+      for (const item of plan.events || []) {
+        await api("/api/calendar/events", { method: "POST", body: item });
+      }
+      // 状态只在用户真的说了的时候才写——否则会拿默认值把「了解你」里
+      // 已经填好的拨盘覆盖掉。
+      const energy = plan.state && plan.state.energy;
+      const stress = plan.state && plan.state.stress;
+      if (Number.isFinite(Number(energy)) || Number.isFinite(Number(stress))) {
+        const merged = {
+          ...prefs.state,
+          captured_at: toLocalIso(new Date()),
+          ...(Number.isFinite(Number(energy)) ? { energy: Number(energy) } : {}),
+          ...(Number.isFinite(Number(stress)) ? { stress: Number(stress) } : {}),
+        };
+        await api("/api/state/manual", { method: "POST", body: merged });
+        Object.assign(prefs.state, merged);
+        savePrefs();
+        syncStateInputs();
+      }
+      plan.written = true;
+      saveChat();
+      renderChat();
+      await loadEvents();
+      await loadDay();
+      toast("写进今天了");
+      go("today");
+    } catch (error) {
+      if (button) button.disabled = false;
+      toast(error.message);
+    }
+  }
+
+  async function listenToPlan(index) {
+    const turn = chat.turns[index];
+    const music = (turn && turn.plan && turn.plan.music) || {};
+    if (!music.soundscape) return;
+    go("rest");
+    try {
+      await playScape(music.soundscape, {
+        bpm: music.bpm || undefined,
+        drums: music.drums || null,
+        context: "说给它听之后配的",
+      });
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
   function bind() {
     for (const trigger of document.querySelectorAll("[data-goto]")) {
       trigger.addEventListener("click", () => go(trigger.dataset.goto));
     }
+
+    // 对话
+    $("chat-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      await sayToAgent($("chat-input").value);
+    });
+
+    // 回车就发，Shift+回车换行——聊天框该有的手感，少一步鼠标。
+    $("chat-input").addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        $("chat-form").requestSubmit();
+      }
+    });
+
+    $("chat-try").addEventListener("click", (event) => {
+      const chip = event.target.closest("[data-say]");
+      if (chip) sayToAgent(chip.dataset.say);
+    });
+
+    $("chat-reset").addEventListener("click", () => {
+      chat.turns = [];
+      saveChat();
+      renderChat();
+      $("chat-note").hidden = true;
+      $("chat-input").value = "";
+    });
+
+    $("chat-log").addEventListener("click", async (event) => {
+      // 卡片是发完消息才生成的，boot 时那轮 [data-goto] 绑定扫不到它，
+      // 这里补一次——「去看看今天」就是卡片里的按钮。
+      const jump = event.target.closest("[data-goto]");
+      if (jump) {
+        go(jump.dataset.goto);
+        return;
+      }
+      const write = event.target.closest("[data-plan-write]");
+      if (write) {
+        await writePlan(Number(write.dataset.planWrite));
+        return;
+      }
+      const listen = event.target.closest("[data-plan-listen]");
+      if (listen) await listenToPlan(Number(listen.dataset.planListen));
+    });
 
     // 今天
     $("refresh-day").addEventListener("click", async () => {
@@ -1419,6 +1727,15 @@
       $("out-volume").textContent = String(Math.round(value * 100));
     });
 
+    // 鼓点音量独立于音乐音量。没有音景时也允许先调（和音量滑杆同理：
+    // 一按播放就该是这个配比），所以不做「先选音景」的拦截。
+    $("drum-volume").addEventListener("input", () => {
+      if (!engine) return;
+      const value = Number($("drum-volume").value) / 100;
+      engine.setDrumVolume(value);
+      $("out-drum-volume").textContent = String(Math.round(value * 100));
+    });
+
     $("scape-grid").addEventListener("click", async (event) => {
       const card = event.target.closest("[data-scape]");
       if (!card) return;
@@ -1533,6 +1850,19 @@
       syncTransport();
     });
 
+    $("drum-chips").addEventListener("click", (event) => {
+      const chip = event.target.closest("[data-drums]");
+      if (!chip) return;
+      if (!engine || !engine.recipe) {
+        toast("先选一个音景");
+        return;
+      }
+      // data-drums="" 是「自动」：setDrums(null) 交回音景的推荐档位。
+      engine.setDrums(chip.dataset.drums || null);
+      renderTuning();
+      syncTransport();
+    });
+
     $("driver-chips").addEventListener("click", (event) => {
       const chip = event.target.closest("[data-driver]");
       if (!chip) return;
@@ -1574,6 +1904,7 @@
             density: item.__recipe.density,
             key: item.__recipe.key,
             progressionIndex: item.__recipe.progressionIndex,
+            drums: item.__recipe.drums,
             seed: item.__recipe.seed,
             context: `收藏 · ${item.name || item.__recipe.soundscape.name}`,
           });
@@ -1615,6 +1946,8 @@
 
   async function boot() {
     loadPrefs();
+    loadChat();
+    renderChat();
     syncStateInputs();
     renderPreferChips();
     renderScapes();

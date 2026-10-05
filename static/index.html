@@ -17,6 +17,7 @@
       <symbol id="i-today" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.1" /><path d="M12 2.8v2.1M12 19.1v2.1M2.8 12h2.1M19.1 12h2.1M5.5 5.5l1.5 1.5M17 17l1.5 1.5M18.5 5.5L17 7M7 17l-1.5 1.5" /></symbol>
       <symbol id="i-you" viewBox="0 0 24 24"><circle cx="12" cy="8.3" r="3.4" /><path d="M4.9 20.1c0-3.6 3.2-6.1 7.1-6.1s7.1 2.5 7.1 6.1" /></symbol>
       <symbol id="i-listen" viewBox="0 0 24 24"><path d="M4 14.4V9.6M8 17.4V6.6M12 20.4V3.6M16 17.4V6.6M20 14.4V9.6" /></symbol>
+      <symbol id="i-talk" viewBox="0 0 24 24"><path d="M20.2 11.6c0 4-3.7 7.2-8.2 7.2a9.4 9.4 0 01-2.6-.36L4.6 20v-3.5A6.9 6.9 0 013.8 11.6c0-4 3.7-7.2 8.2-7.2s8.2 3.2 8.2 7.2z" /></symbol>
       <symbol id="i-play" viewBox="0 0 24 24"><path d="M8.6 5.7l9.9 6.3-9.9 6.3z" /></symbol>
       <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9.3 5.7v12.6M14.7 5.7v12.6" /></symbol>
       <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5.6v12.8M5.6 12h12.8" /></symbol>
@@ -38,7 +39,10 @@
           <span class="wordmark-tag">陪你过完这一天</span>
         </button>
         <nav class="tabs" aria-label="主导航">
-          <button type="button" class="tab is-active" data-goto="today" aria-current="page">
+          <button type="button" class="tab is-active" data-goto="talk" aria-current="page">
+            <svg class="icon" aria-hidden="true"><use href="#i-talk" /></svg><span>对话</span>
+          </button>
+          <button type="button" class="tab" data-goto="today">
             <svg class="icon" aria-hidden="true"><use href="#i-today" /></svg><span>今天</span>
           </button>
           <button type="button" class="tab" data-goto="you">
@@ -51,8 +55,50 @@
       </header>
 
       <main class="stage" id="stage">
+        <!-- ══════════════ 对话 ══════════════ -->
+        <!-- 第一层入口：用户怎么说都行，读成日程与音乐是后端的事。
+             这一页只做三件事——把话收进去、把理解结果摊开、给两个去处
+             （写进今天 / 去休息页自己调）。 -->
+        <section class="view is-active" id="view-talk" aria-labelledby="talk-title">
+          <div class="section-head lead">
+            <h1 id="talk-title" tabindex="-1">先说一句，今天怎么过</h1>
+            <p class="lede">
+              几点上课、想不想跑步、今天累不累、爱听什么——随便写，它来排。
+            </p>
+            <button type="button" class="ghost-btn" id="chat-reset" hidden>
+              <svg class="icon" aria-hidden="true"><use href="#i-refresh" /></svg><span>重新说</span>
+            </button>
+          </div>
+
+          <ol class="chat" id="chat-log" aria-live="polite">
+            <li class="bubble from-agent">
+              <p>我在。把今天的事说给我听，我排好时间，再把音乐配上。</p>
+            </li>
+          </ol>
+
+          <div class="chat-try" id="chat-try">
+            <p class="panel-note">试试这样说</p>
+            <div class="chips wrap">
+              <button type="button" class="chip" data-say="上午数学课，下午四点半去操场跑半小时，晚上写作业到十点">上午数学课，下午四点半去操场跑半小时</button>
+              <button type="button" class="chip" data-say="今天全是自习，有点累，想听点安静的钢琴">今天全是自习，有点累</button>
+              <button type="button" class="chip" data-say="明天上午 9 点数学月考，下午三点英语课，晚上想放松一下">明天上午数学月考，晚上想放松一下</button>
+            </div>
+          </div>
+
+          <form class="chat-write" id="chat-form">
+            <label class="sr-only" for="chat-input">想告诉它的话</label>
+            <textarea
+              id="chat-input"
+              rows="2"
+              placeholder="比如：下午四点半去操场跑半小时，晚上写作业到十点。今天有点累。"
+            ></textarea>
+            <button type="submit" class="solid-btn" id="chat-send">说给它听</button>
+          </form>
+          <p class="panel-note" id="chat-note" hidden></p>
+        </section>
+
         <!-- ══════════════ 今天 ══════════════ -->
-        <section class="view is-active" id="view-today" aria-labelledby="care-line">
+        <section class="view" id="view-today" aria-labelledby="care-line" hidden>
           <article class="care" id="care-card" data-tone="calm">
             <p class="care-when" id="care-when">今天</p>
             <h1 class="care-line" id="care-line" tabindex="-1">先看一眼今天。</h1>
@@ -245,10 +291,17 @@
                   <input type="range" id="player-density" min="0" max="100" step="1" value="45" />
                   <output class="dial-value" id="out-density">–</output>
                 </label>
+                <!-- 音乐与鼓点两条独立的滑杆：用户抱怨「音乐盖过鼓点」时，
+                     能自己把拍子拧上来，不必等我们改混音。 -->
                 <label class="dial" for="player-volume">
-                  <span class="dial-name">音量</span>
-                  <input type="range" id="player-volume" min="0" max="100" step="1" value="70" />
-                  <output class="dial-value" id="out-volume">70</output>
+                  <span class="dial-name">音乐</span>
+                  <input type="range" id="player-volume" min="0" max="100" step="1" value="62" />
+                  <output class="dial-value" id="out-volume">62</output>
+                </label>
+                <label class="dial" for="drum-volume">
+                  <span class="dial-name">鼓点</span>
+                  <input type="range" id="drum-volume" min="0" max="100" step="1" value="85" />
+                  <output class="dial-value" id="out-drum-volume">85</output>
                 </label>
               </div>
               <!-- 超出推荐区间时的提示。不阻止拖动，只说明「这一段是为另一个
@@ -276,6 +329,10 @@
               <div class="tune-row">
                 <span class="tune-label">和声进行</span>
                 <div class="chips wrap" id="progression-chips" role="radiogroup" aria-label="和声进行"></div>
+              </div>
+              <div class="tune-row">
+                <span class="tune-label">鼓点</span>
+                <div class="chips wrap" id="drum-chips" role="radiogroup" aria-label="鼓点强度"></div>
               </div>
               <div class="tune-row">
                 <span class="tune-label">粒子</span>

@@ -190,6 +190,76 @@ class AIRecommender:
             request_payload["thinking"] = {"type": "disabled"}
         return self._chat(request_payload)
 
+    def understand(
+        self,
+        text: str,
+        *,
+        now_iso: str,
+        local: dict[str, Any],
+        catalog: str,
+        history: Any = (),
+    ) -> dict[str, Any]:
+        """把用户随手写的一段话读成结构化的一天（见 ``music_companion.agent``）。
+
+        与 :meth:`care` 一样只负责发出请求并解析 JSON，返回值合不合法由
+        ``agent._merge_ai`` 逐字段判定；不合法就退回本地规则的结果。时间只要
+        ``HH:MM``——ISO8601 由 Python 按用户时区拼，模型不碰。
+        """
+        if not self.is_configured():
+            raise AIRecommenderError("AI interface is not configured")
+
+        system_prompt = (
+            "你是「朝夕」，一个陪用户过完一天的助手。用户会用随便什么写法说今天怎么过："
+            "几点上课、想不想跑步、累不累、爱听什么。你把这段话读成一条时间轴和一整天的音乐。"
+            "只返回 JSON 对象，不要 Markdown、不要解释。字段必须是 reply、events、music、state、preferences。"
+            "reply：一句回话，不超过 50 个字。像熟人说话，不要感叹号、不要 emoji、"
+            "不要「作为你的助手」这类套话，也不要把用户说的话原样复述一遍。"
+            "events：数组，元素是 {title, start, end, category, priority}。"
+            "title 不超过 12 个字，去掉「我要」「打算」这类词；"
+            "start/end 用 24 小时制的 \"HH:MM\"，不要写日期、不要写时区；"
+            "没给结束时间就按事情本身的长度补（一节课 45 分钟、自习 1 小时、吃饭 40 分钟）；"
+            "category 只能是 study / work / commute / exercise / break / other；"
+            "priority 只能是 hard / soft，上课、考试、会议是 hard，其余是 soft；"
+            "最多 12 条，按时间先后排。没有具体时间的事不要编时间，宁可少排一条。"
+            "music：{soundscape, drums, bpm, why}。soundscape 只能从下面的目录里选 id；"
+            "drums 只能是 none / light / standard / strong；bpm 必须是所选音景 BPM 区间内的整数；"
+            "why 一句话说明为什么挑它，不超过 30 个字。"
+            "state：{energy, stress}，0 到 100 的整数，只填用户真的说出来的"
+            "（说了「今天很累」就把 energy 填 25 上下），没说就用 null 或省略。"
+            "preferences：{likes, avoids}，两个字符串数组，只说用户提到的乐器、风格、讨厌的东西，"
+            "没提到就留空数组。\n\n"
+            f"可选音景目录（id=名称 | 时段 | 心情 | 场景 | BPM 区间 | 性格）：\n{catalog}"
+        )
+        messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
+        for turn in list(history)[-6:]:
+            if not isinstance(turn, dict):
+                continue
+            content = str(turn.get("text") or "").strip()[:400]
+            if not content:
+                continue
+            role = "assistant" if str(turn.get("role")) == "agent" else "user"
+            messages.append({"role": role, "content": content})
+        messages.append({
+            "role": "user",
+            "content": (
+                f"现在是 {now_iso}。用户说：{text}\n\n"
+                # 本地正则的草稿只作参考：它常常漏掉句子之间的关系，但「同一句话在
+                # 两条通道下读出来差不多」对用户是件好事（配不配密钥都像同一个产品）。
+                f"本地规则的草稿（仅供参考，可以推翻）：{json.dumps(_draft_hint(local), ensure_ascii=False)}"
+            ),
+        })
+        request_payload: dict[str, Any] = {
+            "model": self.model,
+            "temperature": 0.4,
+            "max_tokens": 900,
+            "response_format": {"type": "json_object"},
+            "messages": messages,
+        }
+        if "minimax" in self.base_url.lower():
+            # 与 recommend 同因：M3 默认会把思考过程写进 content，这里要的是纯 JSON。
+            request_payload["thinking"] = {"type": "disabled"}
+        return self._chat(request_payload)
+
     def _chat(self, request_payload: dict[str, Any]) -> dict[str, Any]:
         """发一次 OpenAI 兼容的 chat/completions 并解析出 JSON 对象。"""
         request_body = json.dumps(request_payload, ensure_ascii=False).encode("utf-8")
@@ -221,6 +291,23 @@ class AIRecommender:
             return _parse_json_content(content)
         except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
             raise AIRecommenderError(f"AI response is not valid JSON: {exc}") from exc
+
+
+def _draft_hint(local: dict[str, Any]) -> dict[str, Any]:
+    """把本地结果压成给模型看的参考草稿：只留标题、时刻和音乐，不留措辞。"""
+    events = []
+    for item in (local or {}).get("events", [])[:12]:
+        events.append({
+            "title": item.get("title"),
+            "start": str(item.get("start") or "")[11:16],
+            "end": str(item.get("end") or "")[11:16],
+            "category": item.get("category"),
+        })
+    music = (local or {}).get("music") or {}
+    return {
+        "events": events,
+        "music": {key: music.get(key) for key in ("soundscape", "drums", "bpm")},
+    }
 
 
 def _parse_json_content(content: Any) -> dict[str, Any]:

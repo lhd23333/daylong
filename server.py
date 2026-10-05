@@ -17,10 +17,12 @@ import mimetypes
 import os
 import tempfile
 import threading
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+from music_companion.agent import plan_day_from_text
 from music_companion.ai_client import AIRecommender
 from music_companion.audio_generator import AudioGenerationError, generate_music_wav
 from music_companion.music_api import MusicAPIError, create_music_client
@@ -105,7 +107,7 @@ class MusicCompanionHandler(BaseHTTPRequestHandler):
             self._send_json(200, soundscape_catalog())
             return
         if parsed.path == "/api/playlist":
-            # 收藏。盘上存的是配方（音景/节拍/节奏量/调性/进行/种子），不是音频，
+            # 收藏。盘上存的是配方（音景/节拍/节奏量/调性/进行/鼓点/种子），不是音频，
             # 所以这里返回的就是几条能直接回放的小 JSON。
             self._send_json(200, {"items": self.server.playlist.list_entries()})
             return
@@ -121,6 +123,9 @@ class MusicCompanionHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/generate-ai-audio":
             self._handle_generate_ai_audio()
+            return
+        if parsed.path == "/api/agent":
+            self._handle_agent()
             return
         if parsed.path == "/api/day":
             self._handle_day_plan()
@@ -182,7 +187,7 @@ class MusicCompanionHandler(BaseHTTPRequestHandler):
     def _handle_playlist_add(self) -> None:
         """收藏一段配方。
 
-        200 还是 201 有讲究：配方 id 是那六个字段的纯函数，同一段音乐重复收藏
+        200 还是 201 有讲究：配方 id 是那七个字段的纯函数，同一段音乐重复收藏
         命中已有条目（``created=False``），这时回 200 而不是 201——前端据此提示
         「已经在收藏里了」。越界或超长一律走 ValueError → 400，**不夹紧**：
         静默改数值会让存下来的和用户听到的不是同一段。
@@ -287,6 +292,34 @@ class MusicCompanionHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "接口不存在"})
         except (ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError) as exc:
             self._send_json(400, {"error": str(exc)})
+
+    def _handle_agent(self) -> None:
+        """对话入口：一段自由文本 → 日程 + 今天的音乐。
+
+        只读接口，不写入任何状态——「写进今天」是前端拿到结果后另外调
+        ``/api/calendar/events`` 完成的。让理解和落库分成两步，用户才有机会
+        在写进去之前先看一眼它排成了什么。
+        """
+        try:
+            payload = self._read_json_body()
+            text = str(payload.get("text") or "")
+            raw_now = payload.get("now")
+            now = str(raw_now) if raw_now else datetime.now().astimezone().isoformat()
+            history = payload.get("history")
+            result = plan_day_from_text(
+                text,
+                now=now,
+                date=str(payload.get("date")) if payload.get("date") else None,
+                history=history if isinstance(history, list) else (),
+                ai=self.server.ai_client,
+            )
+        except (ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            self._send_json(400, {"error": str(exc)})
+            return
+        except Exception as exc:  # noqa: BLE001 - JSON API boundary
+            self._send_json(500, {"error": f"服务器内部错误：{type(exc).__name__}"})
+            return
+        self._send_json(200, result)
 
     def _handle_day_plan(self) -> None:
         """一整天的时间轴编排：日程 + 休息点 + 关怀语 + 音景提示。"""
