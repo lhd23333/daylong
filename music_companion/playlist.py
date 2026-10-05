@@ -30,7 +30,7 @@ from typing import Any
 from uuid import UUID, uuid5
 
 
-# 10 个音景 id，与 soundscape.SOUNDSCAPES 的键逐字一致。这里刻意另存一份而不是
+# 18 个音景 id，与 soundscape.SOUNDSCAPES 的键逐字一致。这里刻意另存一份而不是
 # import 那边：白名单属于**存储格式**的一部分，将来某个音景从目录里下架时，用户
 # 早先的收藏必须还能读出来，不能因为目录变了就把人家的曲子判成非法数据。
 # 代价是新增音景时要同步这里，漏了会让新音景的配方存不进来。
@@ -38,6 +38,8 @@ STYLE_IDS = frozenset({
     "first-light", "desk-hours", "after-rain", "breath",
     "high-noon", "night-lamp", "way-home", "settling",
     "brisk", "run",
+    "volt", "forge", "cloud", "velvet",
+    "neon", "pixel", "midnight", "cafe",
 })
 
 # 鼓点档位，与前端 soundscapes.js 的 DRUM_LEVELS、engine.js 的 DRUM_LAYERS 逐字对应。

@@ -6,7 +6,7 @@
 * 目录完整性与 API 输出契约；
 * ``select_soundscape`` 的确定性与同分时的字典序 tie-break；
 * ``explicit`` 命中已知 id 直接返回、未知 id 忽略；
-* ``bpm_for`` 的返回值必须落在所属音景的 bpm_range 内（参数化遍历全部 10 个音景）；
+* ``bpm_for`` 的返回值必须落在所属音景的 bpm_range 内（参数化遍历全部 18 个音景）；
 * 压力高 / 精力低取下沿，精力高取上沿；
 * ``energy_label`` 对数值、中文标签、英文别名与脏输入的处理。
 """
@@ -28,8 +28,9 @@ from music_companion.soundscape import (
 class SoundscapeCatalogTests(unittest.TestCase):
     """音景目录本身的结构约束。"""
 
-    def test_目录含十个音景且元信息完整(self):
-        self.assertEqual(len(SOUNDSCAPES), 10)
+    def test_目录含十八个音景且元信息完整(self):
+        # 10 个初版 + 第二轮扩充 8 个（摇滚/金属、轻音乐/古典、电子/合成器、爵士/摇摆）
+        self.assertEqual(len(SOUNDSCAPES), 18)
         for sid, scape in SOUNDSCAPES.items():
             with self.subTest(sid=sid):
                 self.assertEqual(sid, scape.id)

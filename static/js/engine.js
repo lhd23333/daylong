@@ -38,6 +38,21 @@
       hat: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
       level: 0.56,
     },
+    // 摇滚：底鼓踩 1、3 拍再补一个起拍（14 格的提前量），八分踩镲铺满。
+    rock: { kick: [0, 8, 14], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], level: 0.6 },
+    // 金属：八分底鼓（双踩感）+ 八分踩镲，整面墙一起推过来。
+    metal: {
+      kick: [0, 2, 4, 6, 8, 10, 12, 14],
+      snare: [4, 12],
+      hat: [0, 2, 4, 6, 8, 10, 12, 14],
+      level: 0.68,
+    },
+    // 电子：四拍一踩（four-on-floor），踩镲只在反拍，靠律动而不是靠重音。
+    fourfloor: { kick: [0, 4, 8, 12], snare: [4, 12], hat: [2, 6, 10, 14], level: 0.55 },
+    // 芯片：老游戏机的鼓机——底鼓方正、踩镲只在反拍打点，留出方波主音的位置。
+    chip: { kick: [0, 8], snare: [4, 12], hat: [2, 6, 10, 14], level: 0.52 },
+    // 摇摆：爵士鼓刷。反拍靠 swing 拖后，所以格子本身写直拍。
+    swing: { kick: [0, 10], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], level: 0.4 },
   };
 
   /**
@@ -244,6 +259,28 @@
     ticksPerSecond() {
       const transport = window.Tone.getTransport();
       return (transport.bpm.value / 60) * transport.PPQ;
+    }
+
+    /**
+     * 摇摆量带来的延迟：小节内偏移（秒）→ 实际要后挪多少秒。正拍恒为 0，
+     * 每拍中间（八分反拍）最大，公式与 Tone 的 Transport 内部一致。
+     *
+     * **必须自己算**：Tone 只摆动它传给回调的时间参数，而本引擎的小节
+     * 回调永远落在小节线（正拍，不摆），音符时刻又是在回调里用「回调时间
+     * + 绝对偏移」排的——所以 Transport.swing 对这个引擎从来就是个摆设
+     * （2026-10-05 排查时发现，此前各音景写的 0.02~0.14 全部没生效）。
+     * 想摇摆只能在偏移上自己加，这里就是那一处。
+     */
+    swingDelay(offsetSeconds) {
+      const swing = this.recipe ? this.recipe.soundscape.groove.swing || 0 : 0;
+      if (!swing) return 0;
+      const transport = window.Tone.getTransport();
+      const quarter = transport.PPQ;
+      const rate = this.ticksPerSecond();
+      const wrapped = ((offsetSeconds * rate) % quarter + quarter) % quarter;
+      if (wrapped === 0) return 0;
+      const amount = Math.sin((wrapped / quarter) * Math.PI) * swing;
+      return (quarter / 3 / rate) * amount;
     }
 
     /**
@@ -667,13 +704,29 @@
     }
 
     assemble(recipe) {
+      const Tone = window.Tone;
       const chain = this.buildChain(recipe.soundscape.space);
       const voices = {};
+      // 失真链的链尾节点（削波 + 音量），只为了释放时能一起 dispose；
+      // voices 里始终放「能演奏的」合成器节点，renderBar 只管演奏。
+      const voiceExtras = [];
       Object.entries(recipe.soundscape.voices).forEach(([name, spec]) => {
         const timbre = TIMBRES[spec.timbre];
         if (!timbre) return;
         const voice = this.buildVoice(timbre, spec.gain);
-        voice.connect(chain.bus);
+        if (timbre.distortion) {
+          // 电吉他类音色：削波挂在合成器与总线之间，音量给在失真**之后**。
+          // 失真是非线性环节，音量放前面会被削平成一样响，放后面才按 dB 可预期。
+          const shaper = new Tone.Distortion({ distortion: timbre.distortion, oversample: "2x" });
+          const out = new Tone.Volume(spec.gain);
+          voice.volume.value = 0;
+          voice.connect(shaper);
+          shaper.connect(out);
+          out.connect(chain.bus);
+          voiceExtras.push(shaper, out);
+        } else {
+          voice.connect(chain.bus);
+        }
         voices[name] = voice;
       });
       const drums = this.buildDrums();
@@ -684,7 +737,7 @@
       // 代价是鼓不带混响——对节拍来说这恰恰是好事：干才紧。
       drums.drumGain.connect(chain.master);
       chain.bus.connect(chain.filter);
-      return { chain, voices, drums };
+      return { chain, voices, voiceExtras, drums };
     }
 
     retire(nodes, fade, token) {
@@ -699,6 +752,7 @@
       if (!nodes) return;
       try {
         Object.values(nodes.voices || {}).forEach((node) => node.dispose && node.dispose());
+        (nodes.voiceExtras || []).forEach((node) => node.dispose && node.dispose());
         Object.values(nodes.drums || {}).forEach((node) => node.dispose && node.dispose());
         Object.values(nodes.chain || {}).forEach((node) => node.dispose && node.dispose());
       } catch (error) {
@@ -788,6 +842,9 @@
       const barSeconds = (60 / bpm) * 4;
       const stepSeconds = barSeconds / 16;
       const humanize = () => (rng() - 0.5) * 0.014;
+      // swing：摇摆音景（爵士、lo-fi）的八分反拍统一后挪；正拍自动是 0，
+      // 所以所有声部无脑过这一道都不会错（鼓、贝斯、键盘、铃音同理）。
+      const swung = (offsetSeconds) => offsetSeconds + this.swingDelay(offsetSeconds);
 
       // 节奏量 → 音符数量与放行门槛。
       //
@@ -838,7 +895,7 @@
           const hits = hitsFor(spec.rate, 2, 12);
           const spacing = barSeconds / hits;
           for (let step = 0; step < hits; step += 1) {
-            const at = time + step * spacing;
+            const at = time + swung(step * spacing);
             const note = notes[order[step % order.length] % notes.length];
             const velocity = 0.34 + (step % 2 === 0 ? 0.14 : 0) + intensity * 0.14;
             voices.keys.triggerAttackRelease(note, spacing * 1.6, at + humanize(), velocity);
@@ -847,7 +904,7 @@
           const hits = hitsFor(spec.rate, 1, 8);
           for (let index = 0; index < hits; index += 1) {
             if (rng() > gate(0.55, 0.7)) continue;
-            const at = time + Math.floor(rng() * 16) * stepSeconds;
+            const at = time + swung(Math.floor(rng() * 16) * stepSeconds);
             const note = notes[Math.floor(rng() * notes.length)];
             voices.keys.triggerAttackRelease(
               note, barSeconds * 0.8, at + humanize(), 0.24 + intensity * 0.16
@@ -877,7 +934,7 @@
           // 变量名不能叫 gate——外层那个密度门槛 helper 已经占了。
           const keep = spec.mode === "arp" ? gate(0.6, 0.7) : gate(0.42, 0.6);
           if (rng() > keep) continue;
-          const at = time + step * spacing + humanize();
+          const at = time + swung(step * spacing) + humanize();
           const note = notes[(step + chordIndex) % notes.length];
           voices.bell.triggerAttackRelease(note, barSeconds * 0.5, at, 0.16 + intensity * 0.12);
         }
@@ -895,7 +952,7 @@
           const beatSeconds = barSeconds / 4;
           for (let beat = 0; beat < 4; beat += 1) {
             if (beat % 2 === 1 && rng() > gate(0.5, 0.6)) continue;
-            voices.bass.triggerAttackRelease(root, beatSeconds * 0.8, time + beat * beatSeconds, 0.44);
+            voices.bass.triggerAttackRelease(root, beatSeconds * 0.8, time + swung(beat * beatSeconds), 0.44);
           }
         } else if (spec.mode === "walk") {
           // 走动感来自「和弦音 + 级进过渡音」交替，而不是硬走音阶。
@@ -903,7 +960,7 @@
           const beatSeconds = barSeconds / 4;
           const rootMidi = Theory.midiFromName(root);
           for (let beat = 0; beat < 4; beat += 1) {
-            const at = time + beat * beatSeconds;
+            const at = time + swung(beat * beatSeconds);
             const useChordTone = beat === 0 || beat === 2 || rng() < 0.45;
             const note = useChordTone
               ? root
@@ -925,12 +982,12 @@
         const scale = 0.5 + intensity * 0.85;
         if (layers.kick) {
           pattern.kick.forEach((step) => {
-            drums.kick.triggerAttackRelease("C1", "8n", time + step * stepSeconds, pattern.level * scale);
+            drums.kick.triggerAttackRelease("C1", "8n", time + swung(step * stepSeconds), pattern.level * scale);
           });
         }
         if (layers.snare) {
           pattern.snare.forEach((step) => {
-            drums.snare.triggerAttackRelease("16n", time + step * stepSeconds, pattern.level * scale * 0.8);
+            drums.snare.triggerAttackRelease("16n", time + swung(step * stepSeconds), pattern.level * scale * 0.8);
           });
         }
         if (layers.hat) {
@@ -942,7 +999,7 @@
             // 的一层。按比例抽掉底鼓会让律动直接塌掉，砍踩镲不会。
             if (accent < 1 && density < 0.35) return;
             drums.hat.triggerAttackRelease(
-              "32n", time + step * stepSeconds, pattern.level * scale * accent * 0.7
+              "32n", time + swung(step * stepSeconds), pattern.level * scale * accent * 0.7
             );
           });
         }
