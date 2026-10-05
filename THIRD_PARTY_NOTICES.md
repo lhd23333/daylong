@@ -13,19 +13,21 @@
   MonoSynth / MembraneSynth / NoiseSynth + Filter / Chorus / Reverb / FeedbackDelay /
   Limiter / Meter / Analyser），在休息点实时生成音乐。
 
-## CPython 3.12.15（仅随 Mac 免安装版分发，不在源码仓库与标准包里）
+## CPython 3.12.15（随各免安装版分发，不在源码仓库与标准包里）
 
 - 来源：python-build-standalone（astral-sh），release tag `20261003`，变体
-  `install_only_stripped`，aarch64 / x86_64 各一份
+  `install_only_stripped`：macOS 的 aarch64 / x86_64 各一份，Windows 的 x86_64 一份
 - Repository: https://github.com/astral-sh/python-build-standalone
 - License: PSF License（包内 `lib/python3.12/LICENSE.txt` 原样保留）
-- 校验：下载后核对 SHA256 与官方发布页一致（aarch64
-  `ad8d0c637c0a36b967b310e2c07254f4d2ca8cabaa7699e55ed6290aceb481a2`，x86_64
-  `562c30864ece2cb1d3e0ad66a1acd498611a47e5a10ce81b99158bef1ccbd355`）
-- 用途：只在 `朝夕-陪你过完这一天-Mac免安装版-<日期>.zip` 的 `python-runtime/` 下，
-  给没装 Python 的 Mac 免安装运行。打包时按 `tmp/mac-runtime/prune.txt` 裁掉与本项目
-  无关的组件（Tcl/Tk、pip、idlelib 等），并逐个校验 `bin/python3.12` 的 Mach-O 头与
-  架构（arm64 / x86_64 与目录名一致）。
+- 校验：下载后核对 SHA256 与官方发布页一致（macOS aarch64
+  `ad8d0c637c0a36b967b310e2c07254f4d2ca8cabaa7699e55ed6290aceb481a2`，macOS x86_64
+  `562c30864ece2cb1d3e0ad66a1acd498611a47e5a10ce81b99158bef1ccbd355`，Windows x86_64
+  `6fba7f2ae506facf41d457ea8293c7497910a675c69a4e954875169410a50402`）
+- 用途：在各免安装版 zip 的 `python-runtime/` 下（`macos-arm64` / `macos-x86_64` /
+  `windows-x86_64`），给没装 Python 的机器免安装运行。打包时分别按
+  `tmp/mac-runtime/prune.txt` 与 `tmp/win-runtime/prune.txt` 裁掉与本项目无关的组件
+  （Tcl/Tk、pip、idlelib 等），并逐个校验解释器二进制的文件头与架构
+  （`bin/python3.12` 是 64 位 Mach-O 且架构与目录名一致；`python.exe` 是 x86_64 PE）。
 
 ## 音频可视化的两层：只借鉴架构思路，未使用第三方代码
 
