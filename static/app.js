@@ -137,6 +137,8 @@
     reminder: null, // daymusic 的提醒调度器，第一次渲染时间轴时建
     reminderItem: null, // 当前弹在卡片上的那条日程
     reminderRecipe: null, // 它的配方，点「先听一段」时用
+    routeQueue: null, // 今天的声音路线：整天节目单（dayqueue.build 的结果）
+    routeStaging: false, // 路线自己正在换段——此时的手动播放拦截要放行
   };
 
   // ── 视图切换 ──────────────────────────────────────────────
@@ -366,6 +368,7 @@
     app.plan = plan;
     renderCare(plan.care || {});
     renderStats(plan.stats);
+    renderDayRoute(plan);
     renderTimeline(plan);
     renderConflicts(plan.conflicts);
     return plan;
@@ -514,6 +517,9 @@
 
   const engine = window.MCEngine;
   const SCAPES = window.MCSoundscapes;
+  // 「今天的声音路线」的连播控制器。懒创建（见 routePlayer）——没用过这条
+  // 路线的人，页面上不会多出一个订阅着引擎事件的空控制器。
+  let dayPlayer = null;
   // 节拍/节奏量的全局硬边界。取不到就退回一份写死的同值副本，别让整页挂掉。
   const LIMITS = (SCAPES && SCAPES.LIMITS) || { bpm: [40, 200], density: [0, 1] };
 
@@ -647,6 +653,11 @@
       toast("音频引擎没加载起来，刷新一下试试");
       return;
     }
+    // 路线在走的时候，任何**手动**播放都视为「我要听这个」：退出节目单，
+    // 方向盘还给用户。routeStaging 是路线自己换段时打的标记，那种不算手动。
+    if (dayPlayer && dayPlayer.isActive() && !app.routeStaging) {
+      dayPlayer.stop("manual");
+    }
     app.lastRequest = {
       soundscapeId: id,
       bpm: options.bpm,
@@ -656,6 +667,9 @@
       key: options.key ?? null,
       progressionIndex: options.progressionIndex ?? null,
       drums: options.drums ?? null,
+      // 上下文行也存下来：暂停再恢复时，「为哪一刻放的」这句话不能丢
+      // （丢了会退回「手动挑的」，连播时和连播条上的段号自相矛盾）。
+      context: options.context || "手动挑的",
     };
     await engine.play(app.lastRequest, { crossfade: options.crossfade ?? 1.6 });
     $("player-context").textContent = options.context || "手动挑的";
@@ -683,6 +697,88 @@
       progressionIndex: recipe.progressionIndex,
       drums: recipe.drums,
     };
+  }
+
+  // ── 今天的声音路线 ────────────────────────────────────────
+  //
+  // dayqueue.js 管节目单和推进逻辑，这里只做接线：谁在放、界面上显示什么、
+  // 手动操作怎么让路。节目单在 loadDay 时随计划一起刷新，不用用户手动重建。
+
+  function routePlayer() {
+    if (dayPlayer || !window.MCDayQueue) return dayPlayer;
+    dayPlayer = window.MCDayQueue.createPlayer({
+      engine,
+      play: async (segment, meta) => {
+        app.routeStaging = true;
+        try {
+          await playScape(segment.request.soundscapeId, {
+            ...segment.request,
+            // 上下文行直接告诉用户「这一段是为哪一刻放的」——节目单和随机
+            // 播放器的区别全在这一行里。
+            context: `今天的声音路线 ${meta.index + 1}/${meta.count} · ${segment.clock} ${segment.label}`,
+          });
+        } finally {
+          app.routeStaging = false;
+        }
+      },
+      onSegment: renderRouteBar,
+      onEnd: (reason) => {
+        renderRouteBar();
+        if (reason === "ended") toast("今天的声音路线走完了。");
+      },
+    });
+    return dayPlayer;
+  }
+
+  /** 休息页的连播条。路线没在走就整条收起来。 */
+  function renderRouteBar() {
+    const bar = $("route-bar");
+    if (!bar) return;
+    const state = dayPlayer && dayPlayer.state();
+    if (!state || !state.active) {
+      bar.hidden = true;
+      return;
+    }
+    bar.hidden = false;
+    $("route-pos").textContent = `今天的声音路线 · ${state.index + 1}/${state.count}`;
+    $("route-seg").textContent = `${state.segment.clock} ${state.segment.label}`;
+  }
+
+  /** 今天页的路线卡片：摘要 + 前几段预览。段数太少就不值得连播，整卡隐藏。 */
+  function renderDayRoute(plan) {
+    const card = $("day-route");
+    if (!card) return;
+    if (!window.MCDayQueue) {
+      card.hidden = true;
+      return;
+    }
+    const state = prefs.state || {};
+    // 不传 date：让每条用自己的开始日期算种子，和时间轴上「放这首」的
+    // 配方逐字一致——同一条日程从哪进听到的都是同一段音乐。
+    const queue = window.MCDayQueue.build(plan && plan.timeline, {
+      energy: Number(state.energy),
+      stress: Number(state.stress),
+    });
+    app.routeQueue = queue;
+    if (queue.segments.length < 2) {
+      card.hidden = true;
+      return;
+    }
+    card.hidden = false;
+    const minutes = Math.max(1, Math.round(queue.totalSeconds / 60));
+    $("route-note").textContent =
+      `从早到晚 ${queue.segments.length} 段串成一条，每段一两分钟自动接上，约 ${minutes} 分钟走完。`;
+
+    const head = queue.segments.slice(0, 3);
+    const rows = head.map(
+      (segment) =>
+        `<li><b>${esc(segment.clock)}</b><span>${esc(segment.label)} · ${esc(
+          scapeName(segment.request.soundscapeId)
+        )}</span></li>`
+    );
+    const rest = queue.segments.length - head.length;
+    if (rest > 0) rows.push(`<li class="route-more"><span>还有 ${rest} 段</span></li>`);
+    $("route-preview").innerHTML = rows.join("");
   }
 
   // when / moods 在数据里是英文 id（跟后端 soundscape.py 的清单对齐），
@@ -1498,6 +1594,15 @@
       }
     });
 
+    $("route-start").addEventListener("click", () => {
+      const queue = app.routeQueue;
+      const player = routePlayer();
+      if (!queue || !queue.segments.length || !player) return;
+      go("rest");
+      app.breakContext = null; // 路线不是某个休息点，别让休息点的种子串进来
+      player.start(queue.segments);
+    });
+
     $("timeline").addEventListener("click", async (event) => {
       const melody = event.target.closest("[data-melody-play]");
       if (melody) {
@@ -1685,7 +1790,13 @@
         if (last) {
           // 用 currentRequest() 而不是直接复用 last：暂停前可能刚拖过节拍、
           // 换过调性/进行，复用旧请求会把那些改动悄悄回滚。
-          await playScape(last.soundscapeId, currentRequest());
+          // 路线在走时恢复播放不是「换台」——接着听当前这一段，路线继续走。
+          app.routeStaging = Boolean(dayPlayer && dayPlayer.isActive());
+          try {
+            await playScape(last.soundscapeId, { ...currentRequest(), context: last.context });
+          } finally {
+            app.routeStaging = false;
+          }
         } else {
           const fallback = (app.plan && app.plan.stats && app.plan.stats.soundscape) || undefined;
           await playScape(fallback, {});
@@ -1702,6 +1813,17 @@
       }
       engine.shuffle();
       syncTransport();
+    });
+
+    // 路线连播条：上一段 / 下一段 / 结束。段内「换一段」（shuffle）不算
+    // 退出——还是这一段，只是换了调性和进行。
+    $("route-bar").addEventListener("click", (event) => {
+      const hit = event.target.closest("[data-route]");
+      if (!hit || !dayPlayer) return;
+      const action = hit.dataset.route;
+      if (action === "prev") dayPlayer.prev();
+      else if (action === "next") dayPlayer.next();
+      else dayPlayer.stop("user");
     });
 
     $("player-tempo").addEventListener("input", () => {

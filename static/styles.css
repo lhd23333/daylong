@@ -295,6 +295,118 @@ button {
   letter-spacing: 0.04em;
 }
 
+/* ── 今天的声音路线 ───────────────────────────────────── */
+
+/* 比关怀卡轻一档的卡片：它是「可以做的事」，不是「对你说的话」。
+   没有阴影、没有暖色竖线，靠一条普通边框和标题的衬线字体站住。 */
+.route-card {
+  margin: 0 0 2rem;
+  padding: 1.15rem 1.3rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper-lift);
+}
+
+.route-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.route-head h2 {
+  font-family: var(--font-serif);
+  font-size: 1.12rem;
+  font-weight: 400;
+}
+
+.route-note {
+  margin-top: 0.3rem;
+  color: var(--ink-3);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+/* 按钮不被窄屏挤扁：卡片头行允许换行。 */
+.route-head .solid-btn {
+  flex-shrink: 0;
+}
+
+.route-preview {
+  margin-top: 0.85rem;
+  border-top: 1px dashed var(--line);
+  padding-top: 0.7rem;
+  display: grid;
+  gap: 0.32rem;
+}
+
+.route-preview li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  font-size: 0.8rem;
+  color: var(--ink-2);
+  min-width: 0;
+}
+
+.route-preview b {
+  flex-shrink: 0;
+  color: var(--ink-3);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.route-preview span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.route-preview .route-more {
+  color: var(--ink-3);
+  font-size: 0.75rem;
+}
+
+/* ── 路线连播条（休息页） ─────────────────────────────── */
+
+.route-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin: 0.9rem 0 1.6rem;
+  padding: 0.55rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper-lift);
+  font-size: 0.8rem;
+}
+
+.route-bar[hidden] {
+  display: none;
+}
+
+.route-pos {
+  flex-shrink: 0;
+  color: var(--clay);
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+}
+
+.route-seg {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-2);
+}
+
+.route-actions {
+  flex-shrink: 0;
+  display: flex;
+  gap: 0.4rem;
+}
+
 /* ── 小标题 ───────────────────────────────────────────── */
 
 .section-head {

@@ -108,6 +108,19 @@
 
           <ul class="day-stats" id="day-stats" aria-label="今天概览"></ul>
 
+          <!-- 今天的声音路线：把每件事的曲子与每个休息点串成一条节目单，
+               在休息页一段接一段自动播。没有日程时整卡隐藏。 -->
+          <article class="route-card" id="day-route" hidden>
+            <div class="route-head">
+              <div>
+                <h2>今天的声音路线</h2>
+                <p class="route-note" id="route-note"></p>
+              </div>
+              <button type="button" class="solid-btn" id="route-start">开始收听</button>
+            </div>
+            <ol class="route-preview" id="route-preview"></ol>
+          </article>
+
           <div class="section-head">
             <h2>今天的时间轴</h2>
             <button type="button" class="ghost-btn" id="refresh-day">
@@ -310,6 +323,18 @@
             </div>
           </div>
 
+          <!-- 声音路线的连播条：只在路线走起来时显示。手动点了别的音景就
+               整条退出（见 app.js 的 playScape），不会和用户抢方向盘。 -->
+          <div class="route-bar" id="route-bar" hidden>
+            <span class="route-pos" id="route-pos"></span>
+            <span class="route-seg" id="route-seg"></span>
+            <div class="route-actions">
+              <button type="button" class="ghost-btn" data-route="prev">上一段</button>
+              <button type="button" class="ghost-btn" data-route="next">下一段</button>
+              <button type="button" class="ghost-btn" data-route="stop">结束</button>
+            </div>
+          </div>
+
           <!-- ── 完全自定义 ──────────────────────────────────────
                默认**展开**。预设已经够好，但「完全自由地搭配」正是这个产品
                和普通播放器的分界，把分界藏在一次点击后面等于没做。真想收起
@@ -423,6 +448,7 @@
     <script src="/js/features.js"></script>
     <script src="/js/particles.js"></script>
     <script src="/js/daymusic.js"></script>
+    <script src="/js/dayqueue.js"></script>
     <script src="/app.js" defer></script>
   </body>
 </html>
