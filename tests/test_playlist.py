@@ -16,7 +16,9 @@
 import json
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 from uuid import UUID
 
 from music_companion.playlist import (
@@ -304,8 +306,16 @@ class PlaylistStoreTests(unittest.TestCase):
 
     def test_新store指向同一文件能读到且按收藏时间倒序(self):
         first_store = self.open_store()
-        first, _ = first_store.add(recipe(name="第一首"))
-        second, _ = first_store.add(recipe(seed=7, name="第二首"))
+        # 收藏时间注入两个确定的时刻，不依赖真实时钟：Windows 上
+        # datetime.now() 的粒度约 16 ms，两次 add 很可能落在同一刻度，
+        # 撞上就按 id 兜底排序（产品行为，见 list_entries），这条用例会偶发假失败。
+        with mock.patch("music_companion.playlist.datetime") as fake_now:
+            fake_now.now.side_effect = (
+                datetime(2026, 10, 5, 10, 0, 0, tzinfo=timezone.utc),
+                datetime(2026, 10, 5, 10, 0, 1, tzinfo=timezone.utc),
+            )
+            first, _ = first_store.add(recipe(name="第一首"))
+            second, _ = first_store.add(recipe(seed=7, name="第二首"))
 
         # 文件本身就是一份可直接读的 JSON 列表（数组顺序＝收藏顺序）
         raw = json.loads(self.path.read_text(encoding="utf-8"))
