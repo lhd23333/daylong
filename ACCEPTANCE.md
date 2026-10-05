@@ -257,7 +257,7 @@ curl.exe -X POST http://127.0.0.1:8000/api/day -H "Content-Type: application/jso
 **通过标准：**
 
 - health 返回 `ok: true`；
-- soundscapes 返回**长度为 10 的数组**（注意：是裸数组，不是 `{"soundscapes": [...]}`）；
+- soundscapes 返回**长度为 18 的数组**（注意：是裸数组，不是 `{"soundscapes": [...]}`）；
 - `/api/agent` 返回 `reply` / `events` / `music` / `state` / `preferences` / `source` /
   `fallback_reason`，其中 `events` 每条的字段与新增日程一致（前端原样 POST 回
   `/api/calendar/events` 即可）；**接口只读**——调用前后日历条数不变；
