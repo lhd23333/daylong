@@ -80,6 +80,48 @@ class ServerApiTests(unittest.TestCase):
         status, body = self.req('GET', '/api/calendar/events?date=2026-10-06')
         self.assertEqual(body['events'][0]['status'], 'done')
 
+    def test_playlist_collect_replay_and_delete(self):
+        # 空歌单是合法状态，不是 404：前端首屏就会拉一次。
+        status, body = self.req('GET', '/api/playlist')
+        self.assertEqual(status, 200)
+        self.assertEqual(body['items'], [])
+
+        recipe = {
+            'styleId': 'first-light', 'bpm': 66, 'density': 0.28,
+            'key': 'C', 'progressionIndex': 1, 'seed': 7, 'name': '晨光 · 66 BPM',
+        }
+        status, body = self.req('POST', '/api/playlist', recipe)
+        self.assertEqual(status, 201)
+        self.assertFalse(body['duplicate'])
+        entry = body['item']
+        self.assertEqual(entry['styleId'], 'first-light')
+        self.assertEqual(entry['bpm'], 66)
+        self.assertTrue(entry['id'])
+        entry_id = entry['id']
+
+        # 同一段音乐再收藏一次：命中已有条目，回 200 且不改名字。
+        status, body = self.req('POST', '/api/playlist', {**recipe, 'name': '换个名字'})
+        self.assertEqual(status, 200)
+        self.assertTrue(body['duplicate'])
+        self.assertEqual(body['item']['id'], entry_id)
+        self.assertEqual(body['item']['name'], '晨光 · 66 BPM')
+
+        status, body = self.req('GET', '/api/playlist')
+        self.assertEqual(len(body['items']), 1)
+
+        # 越界不夹紧，直接 400——存下来的必须是当时听到的那一段。
+        status, body = self.req('POST', '/api/playlist', {**recipe, 'bpm': 300})
+        self.assertEqual(status, 400)
+        self.assertIn('bpm', body['error'].lower())
+
+        status, _ = self.req('DELETE', f'/api/playlist/{entry_id}')
+        self.assertEqual(status, 200)
+        status, _ = self.req('DELETE', f'/api/playlist/{entry_id}')
+        self.assertEqual(status, 404)
+        status, body = self.req('GET', '/api/playlist')
+        self.assertEqual(body['items'], [])
+        self.assertTrue((Path(self.data_dir.name) / 'playlist.json').exists())
+
     def test_malformed_content_length_returns_json_400(self):
         from http.client import HTTPConnection
         connection = HTTPConnection('127.0.0.1', self.port, timeout=3)

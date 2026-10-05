@@ -121,18 +121,30 @@
       const Tone = window.Tone;
       const recipe = Library.resolve(request.soundscapeId, {
         bpm: request.bpm,
+        density: request.density,
         intensity: request.intensity ?? 0.5,
         seed: request.seed ?? 0,
+        key: request.key,
+        progressionIndex: request.progressionIndex,
       });
 
       const sameSoundscape =
         this.playing && this.recipe && this.recipe.soundscape.id === recipe.soundscape.id;
 
       if (sameSoundscape) {
-        // 同一个音景只是调速度或密度：不重建链路，避免可听见的断点。
+        // 同一个音景只是调速度/密度/调性：不重建链路，避免可听见的断点。
+        const keyChanged = Boolean(recipe.key) && recipe.key !== this.key;
         this.recipe = recipe;
+        if (keyChanged) this.key = recipe.key;
+        if (Number.isInteger(recipe.progressionIndex)) {
+          this.progressionIndex = recipe.progressionIndex;
+        }
         this.applyTempo();
         this.applyIntensity();
+        // 换调性必须立刻出声：音高只在 renderBar 里现算，不补这一下的话
+        // 用户点完新调性要等满一个和弦时长（慢速音景是 8 秒）才听到变化，
+        // 中途那段会像是「点了没反应」。
+        if (keyChanged) this.enter();
         return;
       }
 
@@ -257,13 +269,25 @@
       }
     }
 
-    /** 换一组随机选择（调性 + 和声进行），声音不断。 */
+    /**
+     * 换一组随机选择（调性 + 和声进行），声音不断。
+     *
+     * 用户手动钉住的轴不参与抽签：钉了调性就只换进行，钉了进行就只换调性，
+     * 两个都钉住时只换装饰音的种子（琶音与留白会变，和声骨架不动）。
+     * 不做这个区分的话，「换一段」会把用户刚挑好的东西冲掉——那和
+     * 「完全的自定义」是相反的。
+     */
     shuffle() {
       if (!this.recipe) return;
+      const pinnedKey = Boolean(this.recipe.key);
+      const pinnedProgression = Number.isInteger(this.recipe.progressionIndex);
+
       this.recipe.seed = (this.recipe.seed + 1) % 997;
-      this.key = this.pickKey(this.recipe);
       this.rng = mulberry32(seedFrom(`${this.recipe.soundscape.id}:${this.recipe.seed}:${this.recipe.bpm}`));
-      this.progressionIndex = Math.floor(this.rng() * this.recipe.soundscape.progressions.length);
+      if (!pinnedKey) this.key = this.pickKey(this.recipe);
+      if (!pinnedProgression) {
+        this.progressionIndex = Math.floor(this.rng() * this.recipe.soundscape.progressions.length);
+      }
       this.barIndex = 0;
       this.passIndex = -1;
       this.enter();
@@ -275,11 +299,55 @@
       this.applyIntensity();
     }
 
+    /**
+     * 节奏量 0–1：每小节发多少个音。
+     *
+     * **和 intensity 是两件事**，早先它们被同一个滑杆写坏过：界面上的「疏密」
+     * 调的是 intensity，而 intensity 同时管着音符数量、滤波亮度和主音量，
+     * 于是用户拖「疏密」会顺带把响度也改了——他以为自己只调了音符。
+     * 现在密度只管音符，亮度与响度归 intensity。
+     */
+    setDensity(value) {
+      if (!this.recipe) return;
+      const next = Library.clampDensity(value);
+      if (next === null) return;
+      this.recipe.density = next;
+    }
+
+    currentDensity() {
+      return this.recipe ? this.recipe.density : null;
+    }
+
     setBpm(value) {
       if (!this.recipe) return;
-      const [low, high] = this.recipe.soundscape.bpm;
-      this.recipe.bpm = Math.max(low, Math.min(high, Math.round(Number(value) || this.recipe.bpm)));
+      // 夹到全局硬边界（40–200），**不再**夹到音景自己的推荐区间——
+      // 推荐是给方向用的，不是给手铐用的。
+      const next = Library.clampBpm(value);
+      if (next === null) return;
+      this.recipe.bpm = next;
       this.applyTempo();
+    }
+
+    /**
+     * 换调性。音高在 renderBar 里现算，不用重建链路，但要立刻让人听见。
+     * 传 null / 空串 = 解除钉住，交回种子在音景推荐调里挑。
+     */
+    setKey(value) {
+      if (!this.recipe) return;
+      this.recipe.key = Library.isValidKey(value) ? String(value).toUpperCase() : null;
+      this.key = this.pickKey(this.recipe);
+      this.enter();
+    }
+
+    /** 指定和声进行。传 null 表示交回种子随机。 */
+    setProgression(index) {
+      if (!this.recipe) return;
+      const count = this.recipe.soundscape.progressions.length;
+      const next = Number.isInteger(index) && index >= 0 ? index % count : null;
+      this.recipe.progressionIndex = next;
+      if (next !== null) this.progressionIndex = next;
+      this.passIndex = -1;
+      this.enter();
     }
 
     setMuted(value) {
@@ -295,20 +363,25 @@
       }
     }
 
-    /** 播放速度与推荐的差距，用于界面上诚实地说明「已按你现在的状态调慢」。 */
+    /**
+     * 当前速度偏离该音景推荐区间多远，用于界面上诚实地说明「已按你现在的
+     * 状态调慢」。落在推荐区间内返回 null——没偏离就别说自己调过。
+     *
+     * 语义和早先不同：以前比的是区间中点（区间内也算「偏」），解耦之后
+     * 区间内是正常的，「偏」只应该指跑到区间外面去了。
+     */
     describeShift() {
       if (!this.recipe) return null;
-      const [low, high] = this.recipe.soundscape.bpm;
-      const middle = (low + high) / 2;
+      const band = Library.recommendFor(this.recipe.soundscape.id).bpm;
+      if (this.recipe.bpm >= band[0] && this.recipe.bpm <= band[1]) return null;
+      const middle = (band[0] + band[1]) / 2;
       const delta = this.recipe.bpm - middle;
-      if (Math.abs(delta) < 2) return null;
       return { delta: Math.round(delta), direction: delta < 0 ? "slower" : "faster" };
     }
 
     async stop(fade = 1.1) {
       if (!this.nodes) {
         this.playing = false;
-        this.recipe = null;
         return;
       }
       const token = ++this.fadeToken;
@@ -320,9 +393,10 @@
       } catch (error) {
         console.warn("[engine] 淡出失败", error);
       }
+      // 暂停不等于「卸下这段曲子」：recipe / key 照留。界面上的节拍与调性
+      // 读数、三个滑杆、音景卡片的选中态都要继续指向刚才在放的那一段，
+      // 恢复播放也才能从 currentRequest() 拿回**用户当下看到的**参数。
       this.playing = false;
-      this.recipe = null;
-      this.key = null;
       await new Promise((resolve) => window.setTimeout(resolve, fade * 1000 + 120));
       if (token !== this.fadeToken) return; // 等待期间又启动了新的一段
       // transport 停在这里不复位，下次 play 时若已停止会自己复位到 0。
@@ -353,6 +427,10 @@
     // ── 内部：构建 ────────────────────────────────────────────
 
     pickKey(recipe) {
+      // 用户明确指定了调性就用它；否则按种子从该音景的推荐调里挑。
+      // 推荐列表是精选过的（比如「晨光」给的是 C/F/G/D/A#），不是十二个
+      // 全上——某些调配某些音色会浑浊，这一层筛选是音景存在的意义之一。
+      if (recipe.key && Library.isValidKey(recipe.key)) return recipe.key;
       const rng = mulberry32(seedFrom(`${recipe.soundscape.id}:key:${recipe.seed}`));
       return recipe.soundscape.keys[Math.floor(rng() * recipe.soundscape.keys.length)];
     }
@@ -552,7 +630,7 @@
     renderBar(time) {
       if (!this.nodes || !this.recipe) return;
       const Tone = window.Tone;
-      const { soundscape, bpm, intensity } = this.recipe;
+      const { soundscape, bpm, intensity, density } = this.recipe;
       const voicesSpec = soundscape.voices;
       const voices = this.nodes.voices;
       const rng = this.rng;
@@ -561,6 +639,19 @@
       const barSeconds = (60 / bpm) * 4;
       const stepSeconds = barSeconds / 16;
       const humanize = () => (rng() - 0.5) * 0.014;
+
+      // 节奏量 → 音符数量与放行门槛。
+      //
+      // `0.6 + density * 0.8` 让 density = 0.5 时倍率恰好是 1.0，也就是
+      // 「按乐谱原样演奏」；两端分别约 0.6 倍（明显更空）和 1.4 倍（明显
+      // 更密）。不直接用 density 当倍率，是因为那样 0.5 只能得到一半的音符，
+      // 推荐区间的中点会听起来比改版前稀薄一大截。
+      const densityScale = 0.6 + density * 0.8;
+      // 门槛：density = 0.5 时等于 base，向两端各放开 span / 2。
+      const gate = (base, span) => base + (density - 0.5) * span;
+      // 按倍率缩放原谱上的 rate，再夹进 [floor, ceil]。
+      const hitsFor = (rate, floor, ceil) =>
+        Math.max(floor, Math.min(ceil, Math.round((rate || floor) * densityScale)));
 
       // 每若干小节换一条和声进行。
       const passIndex = Math.floor(bar / (BARS_PER_PROGRESSION_PASS * soundscape.barsPerChord));
@@ -593,7 +684,9 @@
         } else if (spec.mode === "broken") {
           // 分解和弦：低—高—中—高的次序比均匀琶音更有呼吸。
           const order = [0, 2, 1, 3, 0, 2, 3, 1];
-          const hits = Math.max(2, Math.min(spec.rate || 8, 8));
+          // 上限从 8 提到 12：原谱最快的分解和弦写的就是 rate 8，若仍夹在 8，
+          // 节奏量拉到最右一个音都不多，滑杆的右半边会是死的。
+          const hits = hitsFor(spec.rate, 2, 12);
           const spacing = barSeconds / hits;
           for (let step = 0; step < hits; step += 1) {
             const at = time + step * spacing;
@@ -602,9 +695,9 @@
             voices.keys.triggerAttackRelease(note, spacing * 1.6, at + humanize(), velocity);
           }
         } else if (spec.mode === "sparse") {
-          const hits = Math.max(1, Math.min(spec.rate || 3, 6));
+          const hits = hitsFor(spec.rate, 1, 8);
           for (let index = 0; index < hits; index += 1) {
-            if (rng() > 0.5 + intensity * 0.35) continue;
+            if (rng() > gate(0.55, 0.7)) continue;
             const at = time + Math.floor(rng() * 16) * stepSeconds;
             const note = notes[Math.floor(rng() * notes.length)];
             voices.keys.triggerAttackRelease(
@@ -629,11 +722,12 @@
           voicing: 0,
           span: 20,
         });
-        const hits = Math.max(1, Math.min(spec.rate || 4, 8));
+        const hits = hitsFor(spec.rate, 1, 10);
         const spacing = barSeconds / hits;
         for (let step = 0; step < hits; step += 1) {
-          const gate = spec.mode === "arp" ? 0.5 + intensity * 0.4 : 0.32 + intensity * 0.24;
-          if (rng() > gate) continue;
+          // 变量名不能叫 gate——外层那个密度门槛 helper 已经占了。
+          const keep = spec.mode === "arp" ? gate(0.6, 0.7) : gate(0.42, 0.6);
+          if (rng() > keep) continue;
           const at = time + step * spacing + humanize();
           const note = notes[(step + chordIndex) % notes.length];
           voices.bell.triggerAttackRelease(note, barSeconds * 0.5, at, 0.16 + intensity * 0.12);
@@ -651,7 +745,7 @@
         } else if (spec.mode === "pulse") {
           const beatSeconds = barSeconds / 4;
           for (let beat = 0; beat < 4; beat += 1) {
-            if (beat % 2 === 1 && rng() > 0.4 + intensity * 0.4) continue;
+            if (beat % 2 === 1 && rng() > gate(0.5, 0.6)) continue;
             voices.bass.triggerAttackRelease(root, beatSeconds * 0.8, time + beat * beatSeconds, 0.44);
           }
         } else if (spec.mode === "walk") {
@@ -684,6 +778,9 @@
         pattern.hat.forEach((step, index) => {
           // 反拍踩镲轻一点、正拍重一点，这是 lo-fi 的基础律动。
           const accent = index % 2 === 0 ? 1 : 0.62;
+          // 低节奏量时先砍反拍踩镲：它是鼓组里最不伤骨架、又最能听出「疏」
+          // 的一层。按比例抽掉底鼓会让律动直接塌掉，砍踩镲不会。
+          if (accent < 1 && density < 0.35) return;
           drums.hat.triggerAttackRelease(
             "32n", time + step * stepSeconds, pattern.level * scale * accent * 0.7
           );

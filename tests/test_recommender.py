@@ -223,10 +223,20 @@ class CareChannelTests(unittest.TestCase):
     def test_未配置时不发请求(self):
         from music_companion.ai_client import AIRecommenderError
 
-        client = AIRecommender(api_key="", base_url="http://127.0.0.1:1/v1")
-        self.assertFalse(client.is_configured())
-        with self.assertRaises(AIRecommenderError):
-            client.care({}, {})
+        # 「未配置」这个场景必须在测试里**显式造出来**：music_api 在导入时会读
+        # 项目根的 .env 并塞进 os.environ，所以开发机上 OPENAI_API_KEY 很可能是
+        # 有值的。不清掉它，这条用例测的就不是「未配置」而是「已配置」了。
+        touched = ("OPENAI_API_KEY", "OPENAI_BASE_URL")
+        saved = {name: os.environ.pop(name, None) for name in touched}
+        try:
+            client = AIRecommender(api_key="", base_url="http://127.0.0.1:1/v1")
+            self.assertFalse(client.is_configured())
+            with self.assertRaises(AIRecommenderError):
+                client.care({}, {})
+        finally:
+            for name, value in saved.items():
+                if value is not None:
+                    os.environ[name] = value
 
     def test_请求体与解析(self):
         import json

@@ -127,6 +127,11 @@
     catalog: [], // 后端 /api/soundscapes 返回的数组
     lastRequest: null, // 上一次播放的参数，暂停后接着放用
     breakContext: null, // 正在休息的那个休息点 id，用来给手动切换音景播种
+    favorites: [], // 收藏的配方（从 /api/playlist 拉回来）
+    driver: null, // 粒子驱动规则 id；null = 用 particles.js 的默认值
+    reminder: null, // daymusic 的提醒调度器，第一次渲染时间轴时建
+    reminderItem: null, // 当前弹在卡片上的那条日程
+    reminderRecipe: null, // 它的配方，点「先听一段」时用
   };
 
   // ── 视图切换 ──────────────────────────────────────────────
@@ -203,15 +208,53 @@
     return fromServer ? fromServer.name : id || "—";
   }
 
+  /**
+   * 一条日程配到的旋律。算一次很便宜（几个哈希），但一屏要渲染十几条，
+   * 而且渲染会被「完成休息」之类的操作反复触发，所以按内容缓存。
+   * 缓存键带上状态值：用户改了当天的精力/压力，配出来的曲子本就该跟着变。
+   */
+  const melodyCache = new Map();
+
+  function melodyFor(item) {
+    if (!window.MCDayMusic || !item || item.kind !== "event") return null;
+    const state = prefs.state || {};
+    const key = [item.id, item.start, item.end, item.title, state.energy, state.stress].join("|");
+    if (!melodyCache.has(key)) {
+      melodyCache.set(
+        key,
+        window.MCDayMusic.recipeFor(item, {
+          date: String(item.start || "").slice(0, 10),
+          energy: Number(state.energy),
+          stress: Number(state.stress),
+        })
+      );
+    }
+    return melodyCache.get(key);
+  }
+
   function eventRow(item) {
     const where = item.location ? ` · ${item.location}` : "";
     const span = `${clockOf(item.start)} – ${clockOf(item.end)}${where}`;
+    const melody = melodyFor(item);
+    // 旋律这一行只在真有配方时出现。window.MCSoundscapes 没加载起来的话，
+    // 日程照常显示，只是没有配乐入口——不能因为音乐模块缺席就让日程看不见。
+    const melodyRow = melody
+      ? `<div class="tl-break-foot">
+           <span class="tl-scape">
+             <svg class="icon" aria-hidden="true"><use href="#i-note" /></svg>${esc(melody.soundscapeName)} · ${melody.bpm} BPM
+           </span>
+           <div class="tl-actions">
+             <button type="button" class="ghost-btn" data-melody-play="${esc(item.id)}">放这首</button>
+           </div>
+         </div>`
+      : "";
     return `
       <li class="tl-item">
         <span class="tl-time">${esc(clockOf(item.start))}</span>
         <div class="tl-body">
           <p class="tl-title">${esc(item.title)}</p>
           <p class="tl-meta">${esc(span)}</p>
+          ${melodyRow}
         </div>
       </li>`;
   }
@@ -252,6 +295,9 @@
     $("timeline-empty").hidden = items.length > 0;
     if (!items.length) {
       list.innerHTML = "";
+      // 空日程也要把监听列表清掉，否则昨天那批条目会留在调度器里，
+      // 明天到点提醒一件今天不存在的事。
+      syncReminder([]);
       return;
     }
 
@@ -276,6 +322,7 @@
       html.push(`<li class="tl-now"><span>现在 ${esc(clockOf(now.toISOString()))}</span><i></i></li>`);
     }
     list.innerHTML = html.join("");
+    syncReminder(items);
   }
 
   function renderConflicts(conflicts) {
@@ -317,6 +364,63 @@
     renderTimeline(plan);
     renderConflicts(plan.conflicts);
     return plan;
+  }
+
+  // ── 提前提醒 ──────────────────────────────────────────────
+  //
+  // daymusic.js 负责「什么时候该响」，这里负责「响了长什么样」。分开是因为
+  // 前者是纯逻辑（可以单测、不碰 DOM），后者纯展示。
+  //
+  // 只在页面开着的时候有效：网页关掉没有后台能力。这是形态的边界，使用说明
+  // 里写明了，不假装自己是常驻 App。
+
+  function syncReminder(items) {
+    if (!window.MCDayMusic) return;
+    const watchable = (items || []).filter((item) => item && item.id && item.start);
+    if (!app.reminder) {
+      app.reminder = window.MCDayMusic.createReminder({
+        items: watchable,
+        onDue: showReminder,
+      }).start();
+    } else {
+      app.reminder.setItems(watchable);
+    }
+  }
+
+  function showReminder(item, minutesLeft) {
+    const recipe = melodyFor(item);
+    app.reminderItem = item;
+    app.reminderRecipe = recipe;
+    $("reminder-when").textContent = `还有 ${Math.max(1, Math.round(minutesLeft))} 分钟`;
+    $("reminder-title").textContent = item.title || item.label || "下一件事";
+    // 说理句是「程序推导」和「玄学配乐」的分界线：为什么这会儿放这个，
+    // 就写在提醒卡上，用户不用猜。
+    $("reminder-why").textContent = recipe ? recipe.why : "";
+    $("reminder-play").hidden = !recipe;
+    $("reminder").hidden = false;
+  }
+
+  /** 把某个条目的旋律放到休息页去播。提醒卡和时间轴上的按钮共用这条路。 */
+  async function playMelodyOf(item, label) {
+    const recipe = melodyFor(item);
+    if (!recipe) {
+      toast("这段日程没配上旋律");
+      return;
+    }
+    go("rest");
+    app.breakContext = null; // 这是日程配乐，不是休息点，别让休息点的种子串进来
+    try {
+      await playScape(recipe.soundscapeId, {
+        bpm: recipe.bpm,
+        density: recipe.density,
+        key: recipe.key,
+        progressionIndex: recipe.progressionIndex,
+        seed: recipe.seed,
+        context: label,
+      });
+    } catch (error) {
+      toast(error.message);
+    }
   }
 
   async function setBreakStatus(id, status) {
@@ -403,6 +507,9 @@
   // 音乐引擎是单例（window.MCEngine），这里只做「谁在放、放什么、显示什么」。
 
   const engine = window.MCEngine;
+  const SCAPES = window.MCSoundscapes;
+  // 节拍/节奏量的全局硬边界。取不到就退回一份写死的同值副本，别让整页挂掉。
+  const LIMITS = (SCAPES && SCAPES.LIMITS) || { bpm: [40, 200], density: [0, 1] };
 
   function currentMeta() {
     if (!engine || !engine.recipe) return "";
@@ -410,13 +517,66 @@
     const parts = [
       `<b>${esc(recipe.soundscape.name)}</b>`,
       `${esc(String(recipe.bpm))} BPM`,
+      `节奏量 ${Math.round(recipe.density * 100)}%`,
       `调性 ${esc(engine.key || "—")}`,
     ];
     const shift = typeof engine.describeShift === "function" ? engine.describeShift() : null;
     if (shift) {
-      parts.push(shift.direction === "slower" ? `比常规慢 ${Math.abs(shift.delta)}` : `比常规快 ${shift.delta}`);
+      parts.push(
+        shift.direction === "slower"
+          ? `比推荐慢 ${Math.abs(shift.delta)}`
+          : `比推荐快 ${shift.delta}`
+      );
     }
     return parts.join(" · ");
+  }
+
+  /**
+   * 把推荐区间画到滑杆轨道的对应位置上（CSS 读 --band-from / --band-to）。
+   *
+   * 坐标用滑杆自己的 min/max 换算，所以节拍从「各音景的窄区间」放开到
+   * 40–200 之后这里不用跟着改。传 null 表示摘掉区间带。
+   */
+  function paintBand(id, band) {
+    const input = $(id);
+    if (!input) return;
+    const low = Number(input.min);
+    const high = Number(input.max);
+    if (!band || !(high > low)) {
+      input.removeAttribute("data-band");
+      return;
+    }
+    const at = (value) => `${((value - low) / (high - low)) * 100}%`;
+    input.style.setProperty("--band-from", at(band[0]));
+    input.style.setProperty("--band-to", at(band[1]));
+    input.setAttribute("data-band", "");
+  }
+
+  /**
+   * 超出推荐区间时的说明。
+   *
+   * 刻意不拦着拖动、也不把值夹回去——解耦之后区间外本来就合法。这条提示
+   * 只负责讲清楚「这段音乐本来是写给另一个速度的」，剩下的交给耳朵。
+   */
+  function updateBandHint(recipe) {
+    const hint = $("band-hint");
+    if (!hint) return;
+    if (!recipe || !SCAPES || typeof SCAPES.recommendFor !== "function") {
+      hint.hidden = true;
+      return;
+    }
+    const band = SCAPES.recommendFor(recipe.soundscape.id);
+    const notes = [];
+    if (recipe.bpm < band.bpm[0]) notes.push(`节拍比它常用的 ${band.bpm[0]} 还慢`);
+    else if (recipe.bpm > band.bpm[1]) notes.push(`节拍超出了它常用的 ${band.bpm[1]}`);
+    if (recipe.density < band.density[0]) notes.push("节奏量比它平时更疏");
+    else if (recipe.density > band.density[1]) notes.push("节奏量比它平时更密");
+    if (!notes.length) {
+      hint.hidden = true;
+      return;
+    }
+    hint.hidden = false;
+    hint.textContent = `${notes.join("，")}。这样也能放——只是「${recipe.soundscape.name}」原本不是为这个速度写的，可能会飘。`;
   }
 
   function syncTransport() {
@@ -424,31 +584,50 @@
     const button = $("play-btn");
     button.innerHTML = `<svg class="icon" aria-hidden="true"><use href="#i-${playing ? "pause" : "play"}" /></svg>`;
     button.setAttribute("aria-label", playing ? "暂停" : "开始播放");
-    $("player-meta").innerHTML = playing ? currentMeta() : "按一下开始。音乐会一直生成下去，不会循环同一段。";
+    $("player-meta").innerHTML = playing
+      ? currentMeta()
+      : "按一下开始。音乐会一直生成下去，不会循环同一段。";
 
     const recipe = engine && engine.recipe;
+    const tempo = $("player-tempo");
+    const density = $("player-density");
+
     if (recipe) {
-      const tempo = $("player-tempo");
-      tempo.min = recipe.soundscape.bpm[0];
-      tempo.max = recipe.soundscape.bpm[1];
+      tempo.min = LIMITS.bpm[0];
+      tempo.max = LIMITS.bpm[1];
       tempo.value = recipe.bpm;
       $("out-tempo").textContent = String(recipe.bpm);
-      $("player-density").value = Math.round(recipe.intensity * 100);
-      $("out-density").textContent = `${Math.round(recipe.intensity * 100)}%`;
+      density.value = Math.round(recipe.density * 100);
+      $("out-density").textContent = `${Math.round(recipe.density * 100)}%`;
       $("player-title").textContent = recipe.soundscape.name;
-      $("player-blurb").textContent = recipe.soundscape.blurb || recipe.soundscape.character || "";
+      $("player-blurb").textContent =
+        recipe.soundscape.blurb || recipe.soundscape.character || "";
+
+      const band = SCAPES.recommendFor(recipe.soundscape.id);
+      paintBand("player-tempo", band.bpm);
+      paintBand("player-density", [band.density[0] * 100, band.density[1] * 100]);
+
+      $("disc-bpm").textContent = String(recipe.bpm);
+      $("disc-key").textContent = engine.key ? `${engine.key} 调` : "";
+    } else {
+      // 没选音景时摘掉区间带，免得留着上一个音景的暖色段骗人。
+      paintBand("player-tempo", null);
+      paintBand("player-density", null);
+      $("disc-bpm").textContent = "–";
+      $("disc-key").textContent = "";
     }
 
-    // 还没有曲子的时候，快慢/疏密没有可调的对象，读数也只是个「–」。
+    // 还没有曲子的时候，节拍/节奏量没有可调的对象，读数也只是个「–」。
     // 把滑杆一并禁掉：能拖但拖了没反应，比灰着更像坏了。
     // 音量例外——它现在就有意义（先调好，一按播放就是这个响度）。
-    $("player-tempo").disabled = !recipe;
-    $("player-density").disabled = !recipe;
+    tempo.disabled = !recipe;
+    density.disabled = !recipe;
 
-    // 一次都没放过的时候，频谱区是一条 92px 的空白——看着像没加载出来。
-    // 收成一条细线，等真的开始出声再展开（这是整个页面上唯一一处动画，
-    // 用在「声音来了」这件事上是值得的）。
+    updateBandHint(recipe);
     $("player").classList.toggle("is-idle", !recipe);
+    // 粒子只在真的出声时显出来。CSS 里挂的也是这个类，两边别写岔。
+    $("player").classList.toggle("is-playing", playing);
+    syncFavButton();
 
     for (const card of document.querySelectorAll(".scape")) {
       const on = Boolean(recipe && card.dataset.scape === recipe.soundscape.id);
@@ -464,17 +643,37 @@
     app.lastRequest = {
       soundscapeId: id,
       bpm: options.bpm,
+      density: options.density,
       intensity: options.intensity ?? 0.45,
       seed: options.seed ?? 0,
+      key: options.key ?? null,
+      progressionIndex: options.progressionIndex ?? null,
     };
     await engine.play(app.lastRequest, { crossfade: options.crossfade ?? 1.6 });
-    if (options.context) {
-      $("player-context").textContent = options.context;
-    } else {
-      $("player-context").textContent = "手动挑的";
-    }
+    $("player-context").textContent = options.context || "手动挑的";
+    renderTuning();
     syncTransport();
     startViz();
+  }
+
+  /**
+   * 把引擎当前的状态拼成一次 play() 请求。
+   *
+   * 暂停之后再按播放必须走这里，不能直接复用 app.lastRequest——用户可能
+   * 在暂停前刚拖过节拍、换过调性，复用旧请求会把那些改动悄悄回滚。
+   */
+  function currentRequest() {
+    const recipe = engine && engine.recipe;
+    if (!recipe) return app.lastRequest || {};
+    return {
+      soundscapeId: recipe.soundscape.id,
+      bpm: recipe.bpm,
+      density: recipe.density,
+      intensity: recipe.intensity,
+      seed: recipe.seed,
+      key: recipe.key,
+      progressionIndex: recipe.progressionIndex,
+    };
   }
 
   // when / moods 在数据里是英文 id（跟后端 soundscape.py 的清单对齐），
@@ -507,54 +706,136 @@
       )
       .join("");
 
-    const stats = window.MCSoundscapes && window.MCSoundscapes.libraryStats();
+    const stats = SCAPES && SCAPES.libraryStats();
     if (stats) {
-      $("library-note").textContent = `${stats.soundscapes} 个音景 · ${stats.combinations} 种组合`;
+      // 组合数按**全局**节拍档位（40–200 共 161 档）算，不再是各音景自己的
+      // 窄区间——解耦之后速度本来就能拖到推荐区间外，按推荐区间计数会小看自己。
+      $("library-note").textContent =
+        `${stats.soundscapes} 个音景 · ${stats.progressions} 条进行 · ` +
+        `${stats.combinations} 种组合（${stats.bpm[0]}–${stats.bpm[1]} BPM 任意搭配）`;
     }
   }
 
-  // 频谱可视化：64 段 dB 值映射成细柱，带一点回落阻尼，
-  // 比直接画实时值耐看（否则每帧抖成噪点）。
-  const viz = { raf: 0, running: false, bars: [], edges: [], bins: 0 };
+  // ── 光碟 + 外圈频谱 ───────────────────────────────────────
+  //
+  // 频谱绕成一圈而不是拉成一条：播放器中间本来就该有个东西在转，而一条
+  // 92px 的横条只占地方。绕成环之后它既是那个「在转的东西」，也仍然是真的
+  // 频谱——读的是同一个 engine.getSpectrum()，dB 映射沿用原来那套实测参数。
+  //
+  // 碟的转速跟 BPM 走，一小节转 1/8 圈，于是「快」是看得出来的。
+
+  const viz = {
+    raf: 0,
+    running: false,
+    bars: [],
+    edges: [],
+    bins: 0,
+    angle: 0,
+    lastAt: 0,
+    particles: null,
+    features: null,
+    paused: false,
+  };
+
   // 频谱只画到这条线左边——再往上的频段实测已经低于噪声底，画出来是空白。
   const TOP_FRACTION = 0.42;
+  // 上下限来自实测：静音段约 -150 dB，最响的 bin 到过 -35 dB 左右。
+  // 早先按 -92 当下限，结果一半以上的柱子被夹成 0。
+  const FLOOR_DB = -145;
+  const SPAN_DB = 110;
+  // 环上一圈画多少根柱子。比原来横条的 52 根多：围成一圈之后每根之间的
+  // 弧长本来就比横向间距短，根数太少会连成一片锯齿。
+  const RING_GROUPS = 96;
+  const CLAY_RGB = "168, 85, 47";
 
-  function drawViz() {
-    const canvas = $("viz");
+  function drawDisc(now) {
+    const canvas = $("disc");
     if (!canvas) return;
-    const width = canvas.clientWidth;
-    const height = canvas.clientHeight;
-    if (width < 4 || height < 4) return;
+    const size = canvas.clientWidth;
+    if (size < 40) return;
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
-      canvas.width = Math.round(width * dpr);
-      canvas.height = Math.round(height * dpr);
+    if (canvas.width !== Math.round(size * dpr)) {
+      canvas.width = Math.round(size * dpr);
+      canvas.height = Math.round(size * dpr);
     }
     const ctx = canvas.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, width, height);
+    ctx.clearRect(0, 0, size, size);
 
-    const spectrum = engine && typeof engine.getSpectrum === "function" ? engine.getSpectrum() : null;
-    if (!spectrum || spectrum.length < 8) {
-      ctx.strokeStyle = "rgba(30, 28, 25, 0.12)";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(0, height - 0.5);
-      ctx.lineTo(width, height - 0.5);
-      ctx.stroke();
-      return;
+    const center = size / 2;
+    const playing = Boolean(engine && engine.isPlaying());
+
+    // 转速：一小节转 1/8 圈。60 BPM 时一小节 4 秒，一圈就是 32 秒——慢到
+    // 几乎察觉不到在动，但盯着看确实在转。转太快会吵，这是刻意压下来的。
+    const bpm = engine && engine.recipe ? engine.recipe.bpm : 80;
+    const dt = viz.lastAt ? Math.min(0.1, (now - viz.lastAt) / 1000) : 0;
+    viz.lastAt = now;
+    if (playing && Number.isFinite(dt)) {
+      viz.angle += ((dt * bpm) / 60) * ((Math.PI * 2) / 8);
     }
 
+    const ringInner = size * 0.36;
+    const ringMax = size * 0.11;
+
+    ctx.save();
+    ctx.translate(center, center);
+    ctx.rotate(viz.angle);
+
+    // 碟面：一圈很淡的径向渐变，中心提亮。
+    const face = ctx.createRadialGradient(0, 0, ringInner * 0.18, 0, 0, ringInner);
+    face.addColorStop(0, "rgba(30, 28, 25, 0.045)");
+    face.addColorStop(0.75, "rgba(30, 28, 25, 0.03)");
+    face.addColorStop(1, "rgba(30, 28, 25, 0.075)");
+    ctx.beginPath();
+    ctx.arc(0, 0, ringInner, 0, Math.PI * 2);
+    ctx.fillStyle = face;
+    ctx.fill();
+
+    // 音轨：几圈细同心圆。「光碟」这个意象全靠它们，没有就是个大圆。
+    ctx.strokeStyle = "rgba(30, 28, 25, 0.08)";
+    ctx.lineWidth = 1;
+    for (let ratio = 0.42; ratio < 0.99; ratio += 0.115) {
+      ctx.beginPath();
+      ctx.arc(0, 0, ringInner * ratio, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // 一道扫过盘面的高光。它在跟着转，所以「在转」一眼就看得出来。
+    const sweep = ctx.createLinearGradient(-ringInner, -ringInner, ringInner, ringInner);
+    sweep.addColorStop(0, "rgba(255, 255, 255, 0)");
+    sweep.addColorStop(0.44, "rgba(255, 255, 255, 0)");
+    sweep.addColorStop(0.5, "rgba(255, 255, 255, 0.55)");
+    sweep.addColorStop(0.56, "rgba(255, 255, 255, 0)");
+    sweep.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.beginPath();
+    ctx.arc(0, 0, ringInner, 0, Math.PI * 2);
+    ctx.fillStyle = sweep;
+    ctx.fill();
+
+    // 碟心那块漆。这里是空的——BPM 读数由 HTML 叠在上面，理由见 CSS 注释。
+    ctx.beginPath();
+    ctx.arc(0, 0, ringInner * 0.37, 0, Math.PI * 2);
+    ctx.fillStyle = "#f5f2ea";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(30, 28, 25, 0.13)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.restore();
+
+    // —— 外圈频谱 ——
+    const spectrum = engine && typeof engine.getSpectrum === "function" ? engine.getSpectrum() : null;
+    if (!spectrum || spectrum.length < 8) return;
+
     const bins = spectrum.length;
-    const groups = Math.min(52, bins);
+    const groups = Math.min(RING_GROUPS, bins);
 
     // 两个真实的约束，都是量出来的，不是拍的：
-    //   1. FFT 的 bin 是线性分频，而听感是对数的。按线性画，能量会全挤在
-    //      左边一小撮。所以按 i^1.8 划分边界，低频窄、高频宽。
+    //   1. FFT 的 bin 是线性分频，而听感是对数的。按线性排，能量会全挤在
+    //      一小撮里。所以按 i^1.8 划分边界，低频窄、高频宽。
     //   2. 这些音色是电钢/铺底，实测 bin 11（约 1 kHz）往上就落进 -120 dB
-    //      以下的噪声底了。若是照着整条 0–22 kHz 的轴画，一半以上的宽度会
-    //      是一马平川。所以只呈现到 TOP_FRACTION 处，也就是真正有声音的那段。
+    //      以下的噪声底了。照整条 0–22 kHz 的轴画，大半圈会是一马平川。
+    //      所以只呈现到 TOP_FRACTION 处，也就是真正有声音的那段。
     const topBin = Math.max(groups + 1, Math.round(bins * TOP_FRACTION));
     if (viz.edges.length !== groups + 1 || viz.bins !== bins) {
       const edges = [0];
@@ -567,46 +848,90 @@
       viz.bars = new Array(groups).fill(0);
     }
 
-    const gap = 2;
-    const barWidth = Math.max(1.5, (width - gap * (groups - 1)) / groups);
-    const FLOOR_DB = -145;
-    const SPAN_DB = 110;
-
     for (let index = 0; index < groups; index += 1) {
       let peak = -Infinity;
       for (let slot = viz.edges[index]; slot < viz.edges[index + 1]; slot += 1) {
         if (Number.isFinite(spectrum[slot])) peak = Math.max(peak, spectrum[slot]);
       }
-      // 上下限来自实测：静音段约 -150 dB，最响的 bin 到过 -35 dB 左右。
-      // 早先按 -92 当下限，结果一半以上的柱子被夹成 0。
       const level = Number.isFinite(peak)
         ? Math.max(0, Math.min(1, (peak - FLOOR_DB) / SPAN_DB))
         : 0;
-      // 上冲要快、回落要慢，视觉上才像「声音在动」而不是噪声。
+      // 上冲要快、回落要慢，不然每帧的实时值会抖成噪点。
       viz.bars[index] = level > viz.bars[index] ? level : viz.bars[index] * 0.86 + level * 0.14;
     }
 
-    const gradient = ctx.createLinearGradient(0, height, 0, 0);
-    gradient.addColorStop(0, "rgba(168, 85, 47, 0.28)");
-    gradient.addColorStop(1, "rgba(168, 85, 47, 0.82)");
-    ctx.fillStyle = gradient;
-
+    // 柱子沿半径向外长。从正上方起、顺时针铺开，于是低频在顶端，顺着看
+    // 下去频率越来越高——和一条横着的频谱在直觉上是一致的，只是绕了一圈。
+    ctx.save();
+    ctx.translate(center, center);
+    ctx.lineCap = "round";
+    const stroke = Math.max(1.6, ((Math.PI * 2 * ringInner) / groups) * 0.42);
     for (let index = 0; index < groups; index += 1) {
-      const barHeight = Math.max(2, viz.bars[index] * (height - 6));
-      const x = index * (barWidth + gap);
-      const y = height - barHeight;
+      const angle = -Math.PI / 2 + (index / groups) * Math.PI * 2;
+      const level = viz.bars[index];
+      const length = Math.max(1.5, level * ringMax);
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      ctx.strokeStyle = `rgba(${CLAY_RGB}, ${(0.22 + level * 0.62).toFixed(3)})`;
+      ctx.lineWidth = stroke;
       ctx.beginPath();
-      if (typeof ctx.roundRect === "function") ctx.roundRect(x, y, barWidth, barHeight, barWidth / 2);
-      else ctx.rect(x, y, barWidth, barHeight);
-      ctx.fill();
+      ctx.moveTo(cos * ringInner, sin * ringInner);
+      ctx.lineTo(cos * (ringInner + length), sin * (ringInner + length));
+      ctx.stroke();
     }
+    ctx.restore();
+  }
+
+  // ── 粒子 ─────────────────────────────────────────────────
+  //
+  // 粒子只读 MCFeatures 归纳出来的标量（bass / mid / treble / rms / 谱心 /
+  // 拍点），完全不碰原始 FFT。这个分层是从 Audio Shader Studio（MIT）那类
+  // 项目借来的思路：一套音频分析驱动任意多套视觉，换视觉不用改分析。
+
+  function ensureParticles() {
+    if (viz.particles || !window.MCParticles) return viz.particles;
+    const canvas = $("particles");
+    if (!canvas) return null;
+    viz.particles = window.MCParticles.create(canvas, {
+      driver: app.driver || "orbit",
+      // 背景色必须和卡片底色一致：拖尾靠半透明覆盖实现，颜色对不上会积出
+      // 一层洗不掉的灰。
+      background: "#fbf9f3",
+    });
+    return viz.particles;
+  }
+
+  function ensureFeatures() {
+    if (!viz.features && window.MCFeatures) {
+      // 256 是 engine 里 Tone.Analyser 的 fftSize，别改。
+      viz.features = window.MCFeatures.createExtractor({ binCount: 256 });
+    }
+    return viz.features;
+  }
+
+  function drawParticles() {
+    const particles = ensureParticles();
+    if (!particles) return;
+    if (!engine || !engine.isPlaying()) {
+      // 暂停时让粒子停住。只喊一次，不要每帧都去 pause。
+      if (!viz.paused) {
+        viz.paused = true;
+        particles.pause();
+      }
+      return;
+    }
+    viz.paused = false;
+    const features = ensureFeatures();
+    const spectrum = engine.getSpectrum();
+    particles.frame(features ? features.update(spectrum) : { active: false });
   }
 
   function startViz() {
     if (viz.running) return;
     viz.running = true;
-    const tick = () => {
-      drawViz();
+    const tick = (now) => {
+      drawDisc(now || 0);
+      drawParticles();
       viz.raf = window.requestAnimationFrame(tick);
     };
     viz.raf = window.requestAnimationFrame(tick);
@@ -615,6 +940,222 @@
   function stopViz() {
     viz.running = false;
     window.cancelAnimationFrame(viz.raf);
+  }
+
+  // ── 完全自定义：调性 / 和声进行 / 粒子 ─────────────────────
+  //
+  // 音景、节拍、节奏量是三条主轴，这里再挂两个自由维度。都不强制：不选就是
+  // 「自动」，由种子决定，每次「换一段」会落到新的组合上；选了就钉住，之后
+  // 「换一段」不会动它（引擎里 shuffle() 会看有没有钉）。
+  //
+  // 调性清单和 theory.js 的 PITCH_CLASSES 必须逐字一致——那边只认升号。
+  const KEY_CHOICES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+
+  /** 和声进行在人眼里的简写：1maj7 / 5add9 / 6min7 / 4maj7 → 1·5·6·4 */
+  function progressionLabel(progression) {
+    return progression
+      .map((symbol) => (/^([1-7])/.exec(String(symbol)) || ["", "?"])[1])
+      .join("·");
+  }
+
+  function renderTuning() {
+    if (!$("key-chips")) return;
+    const recipe = engine && engine.recipe;
+    const suggestedKeys = recipe ? recipe.soundscape.keys : [];
+    const suggestedProgression =
+      recipe && Number.isInteger(recipe.progressionIndex) ? recipe.progressionIndex : null;
+
+    // 收起状态下的那行小字要能替代面板本身，所以写**当前实际生效的值**，
+    // 而不是「自动 / 自动 / 默认」三个同义词——后者等于什么都没说。
+    // 哪些是被钉住的、哪些是自动挑的，看下面哪颗芯片亮着就知道。
+    if ($("tune-summary")) {
+      if (!recipe) {
+        $("tune-summary").textContent = "音景、节拍、节奏量完全解耦，怎么搭都行";
+      } else {
+        const drivers = (window.MCParticles && window.MCParticles.DRIVERS) || [];
+        const driverId = app.driver || (drivers[0] && drivers[0].id);
+        const driver = drivers.find((item) => item.id === driverId);
+        const progression =
+          Number.isInteger(recipe.progressionIndex) && recipe.soundscape.progressions[recipe.progressionIndex];
+        $("tune-summary").textContent = [
+          engine.key ? `${engine.key} 调` : "—",
+          progression ? progressionLabel(progression) : "—",
+          driver ? driver.name : "—",
+        ].join(" · ");
+      }
+    }
+
+    // 调性：自动 + 十二个。推荐调排在前面——先给方向，再给全集。
+    const currentKey = recipe ? recipe.key : null;
+    const orderedKeys = suggestedKeys.concat(KEY_CHOICES.filter((key) => !suggestedKeys.includes(key)));
+    $("key-chips").innerHTML =
+      `<button type="button" class="chip${currentKey ? "" : " is-on"}" data-key="">自动</button>` +
+      orderedKeys
+        .map((key) => {
+          const on = currentKey === key;
+          const mark = suggestedKeys.includes(key) ? " is-suggested" : "";
+          return `<button type="button" class="chip${on ? " is-on" : ""}${mark}" data-key="${esc(key)}">${esc(key)}</button>`;
+        })
+        .join("");
+
+    // 和声进行：自动 + 当前音景的那几条。
+    const progressions = recipe ? recipe.soundscape.progressions : [];
+    $("progression-chips").innerHTML =
+      `<button type="button" class="chip${suggestedProgression === null ? " is-on" : ""}" data-progression="">自动</button>` +
+      progressions
+        .map(
+          (progression, index) =>
+            `<button type="button" class="chip${suggestedProgression === index ? " is-on" : ""}" ` +
+            `data-progression="${index}" title="${esc(progression.join(" → "))}">` +
+            `${esc(progressionLabel(progression))}</button>`
+        )
+        .join("");
+
+    // 粒子：驱动规则由 particles.js 提供，没加载就整行留空。
+    const particleBox = $("driver-chips");
+    const drivers = (window.MCParticles && window.MCParticles.DRIVERS) || [];
+    if (!drivers.length) {
+      particleBox.innerHTML = `<span class="panel-foot">粒子模块没加载起来。</span>`;
+      return;
+    }
+    const currentDriver = app.driver || drivers[0].id;
+    particleBox.innerHTML = drivers
+      .map(
+        (driver) =>
+          `<button type="button" class="chip${currentDriver === driver.id ? " is-on" : ""}" ` +
+          `data-driver="${esc(driver.id)}" title="${esc(driver.blurb || "")}">${esc(driver.name)}</button>`
+      )
+      .join("");
+  }
+
+  // ── 收藏 ─────────────────────────────────────────────────
+  //
+  // 存的是**配方**不是音频：因为整条合成链路都是确定性的（种子固定的伪随机
+  // 数），同一组 {音景, 节拍, 节奏量, 调性, 进行, 种子} 永远得到同一段音乐。
+  // 所以「收藏一首好听的曲子」就是存这六个字段——不占空间，也不怕文件丢。
+
+  /** 一条配方的身份。用于判断「现在放的这段是不是已经收藏过了」。 */
+  function recipeKey(recipe) {
+    if (!recipe) return "";
+    return [
+      recipe.soundscape.id,
+      recipe.bpm,
+      Number(recipe.density).toFixed(3),
+      recipe.key || "",
+      Number.isInteger(recipe.progressionIndex) ? recipe.progressionIndex : "",
+      recipe.seed,
+    ].join("|");
+  }
+
+  function isFavorite(recipe) {
+    const key = recipeKey(recipe);
+    return Boolean(key) && app.favorites.some((item) => recipeKey(item.__recipe) === key);
+  }
+
+  function syncFavButton() {
+    const button = $("fav-btn");
+    if (!button) return;
+    const recipe = engine && engine.recipe;
+    button.disabled = !recipe;
+    const on = isFavorite(recipe);
+    $("fav-label").textContent = on ? "已收藏" : "收藏";
+    button.classList.toggle("is-on", on);
+  }
+
+  async function loadFavorites() {
+    try {
+      const data = await api("/api/playlist");
+      app.favorites = (Array.isArray(data) ? data : data.items || []).map((item) => ({
+        ...item,
+        // 后端存的是扁平字段，这里还原成引擎认的配方形状。
+        __recipe: {
+          soundscape: SCAPES.get(item.styleId) || SCAPES.list[0],
+          bpm: item.bpm,
+          density: item.density,
+          key: item.key || null,
+          progressionIndex: Number.isInteger(item.progressionIndex)
+            ? item.progressionIndex
+            : null,
+          seed: item.seed,
+        },
+      }));
+    } catch (error) {
+      // 收藏失败不该打断主要流程：拉不到就当空的，页面照常用。
+      app.favorites = [];
+    }
+    renderFavorites();
+    syncFavButton();
+  }
+
+  function renderFavorites() {
+    const list = $("fav-list");
+    if (!list) return;
+    const items = app.favorites;
+    $("fav-empty").hidden = items.length > 0;
+    $("fav-note").textContent = items.length ? `${items.length} 段` : "";
+    list.innerHTML = items
+      .map((item) => {
+        const recipe = item.__recipe;
+        const parts = [
+          `${recipe.bpm} BPM`,
+          `节奏量 ${Math.round(recipe.density * 100)}%`,
+          recipe.key ? `${recipe.key} 调` : "调性自动",
+        ];
+        return `
+        <li class="fav-item" data-fav="${esc(item.id)}">
+          <div class="fav-main">
+            <span class="fav-name">${esc(item.name || recipe.soundscape.name)}</span>
+            <span class="fav-meta">${esc(recipe.soundscape.name)} · ${esc(parts.join(" · "))}</span>
+          </div>
+          <div class="fav-actions">
+            <button type="button" class="ghost-btn" data-fav-play="${esc(item.id)}">播放</button>
+            <button type="button" class="ghost-btn" data-fav-del="${esc(item.id)}" aria-label="删除这条收藏">
+              <svg class="icon" aria-hidden="true"><use href="#i-trash" /></svg>
+            </button>
+          </div>
+        </li>`;
+      })
+      .join("");
+  }
+
+  async function addFavorite() {
+    const recipe = engine && engine.recipe;
+    if (!recipe) return;
+    if (isFavorite(recipe)) {
+      toast("这一段已经在收藏里了");
+      return;
+    }
+    try {
+      const saved = await api("/api/playlist", {
+        method: "POST",
+        body: {
+          styleId: recipe.soundscape.id,
+          bpm: recipe.bpm,
+          density: recipe.density,
+          key: recipe.key || null,
+          progressionIndex: Number.isInteger(recipe.progressionIndex)
+            ? recipe.progressionIndex
+            : null,
+          seed: recipe.seed,
+          name: `${recipe.soundscape.name} · ${recipe.bpm} BPM`,
+        },
+      });
+      await loadFavorites();
+      toast(saved && saved.duplicate ? "这一段已经在收藏里了" : "已存进收藏");
+    } catch (error) {
+      toast(`收藏失败：${error.message || error}`);
+    }
+  }
+
+  async function removeFavorite(id) {
+    const item = app.favorites.find((entry) => entry.id === id);
+    if (!item) return;
+    try {
+      await api(`/api/playlist/${encodeURIComponent(id)}`, { method: "DELETE" });
+      await loadFavorites();
+    } catch (error) {
+      toast(`删除失败：${error.message || error}`);
+    }
   }
 
   // ── 事件绑定 ──────────────────────────────────────────────
@@ -639,6 +1180,14 @@
     });
 
     $("timeline").addEventListener("click", async (event) => {
+      const melody = event.target.closest("[data-melody-play]");
+      if (melody) {
+        const item = (app.plan && app.plan.timeline ? app.plan.timeline : []).find(
+          (entry) => entry.id === melody.dataset.melodyPlay
+        );
+        if (item) await playMelodyOf(item, `为「${item.title}」准备的`);
+        return;
+      }
       const play = event.target.closest("[data-break-play]");
       const done = event.target.closest("[data-break-done]");
       const reopen = event.target.closest("[data-break-reopen]");
@@ -815,11 +1364,9 @@
       const last = app.lastRequest;
       try {
         if (last) {
-          await playScape(last.soundscapeId, {
-            bpm: last.bpm,
-            intensity: last.intensity,
-            seed: last.seed,
-          });
+          // 用 currentRequest() 而不是直接复用 last：暂停前可能刚拖过节拍、
+          // 换过调性/进行，复用旧请求会把那些改动悄悄回滚。
+          await playScape(last.soundscapeId, currentRequest());
         } else {
           const fallback = (app.plan && app.plan.stats && app.plan.stats.soundscape) || undefined;
           await playScape(fallback, {});
@@ -848,7 +1395,9 @@
     $("player-density").addEventListener("input", () => {
       if (!engine || !engine.recipe) return;
       const value = Number($("player-density").value) / 100;
-      engine.setIntensity(value);
+      // 调的是 density 不是 intensity：拖「节奏量」只该改音符多少，
+      // 不该顺带把响度和亮度也动了。
+      engine.setDensity(value);
       $("out-density").textContent = `${Math.round(value * 100)}%`;
     });
 
@@ -938,7 +1487,92 @@
     });
 
     window.addEventListener("resize", () => {
-      if (!$("view-rest").hidden) drawViz();
+      if (!$("view-rest").hidden) {
+        drawDisc(0);
+        // 粒子画布铺满整张卡片，尺寸变了必须重新算 dpr 和边界。
+        if (viz.particles) viz.particles.resize();
+      }
+    });
+
+    // 自己调：调性 / 和声进行 / 粒子
+    $("key-chips").addEventListener("click", (event) => {
+      const chip = event.target.closest("[data-key]");
+      if (!chip) return;
+      if (!engine || !engine.recipe) {
+        toast("先选一个音景");
+        return;
+      }
+      // data-key="" 是「自动」：engine.setKey(null) 会解除钉住。
+      engine.setKey(chip.dataset.key || null);
+      renderTuning();
+      syncTransport();
+    });
+
+    $("progression-chips").addEventListener("click", (event) => {
+      const chip = event.target.closest("[data-progression]");
+      if (!chip) return;
+      if (!engine || !engine.recipe) {
+        toast("先选一个音景");
+        return;
+      }
+      // data-progression="" 是「自动」；setProgression 认得 null。
+      const raw = chip.dataset.progression;
+      engine.setProgression(raw === "" ? null : Number(raw));
+      renderTuning();
+      syncTransport();
+    });
+
+    $("driver-chips").addEventListener("click", (event) => {
+      const chip = event.target.closest("[data-driver]");
+      if (!chip) return;
+      app.driver = chip.dataset.driver;
+      const particles = ensureParticles();
+      if (particles) particles.setDriver(app.driver);
+      renderTuning();
+    });
+
+    $("fav-btn").addEventListener("click", async () => {
+      if (!engine || !engine.recipe) {
+        toast("先放一段再收藏");
+        return;
+      }
+      await addFavorite();
+    });
+
+    // 提醒卡：关掉 / 直接开播。两条路都要把卡片收起来——留着会挡住
+    // 右下角的内容，而且「已经处理过了」这件事用户已经从动作里得到了确认。
+    $("reminder-close").addEventListener("click", () => {
+      $("reminder").hidden = true;
+    });
+
+    $("reminder-play").addEventListener("click", async () => {
+      const item = app.reminderItem;
+      $("reminder").hidden = true;
+      if (!item) return;
+      await playMelodyOf(item, `还有几分钟：${item.title || item.label || ""}`);
+    });
+
+    $("fav-list").addEventListener("click", async (event) => {
+      const play = event.target.closest("[data-fav-play]");
+      if (play) {
+        const item = app.favorites.find((entry) => entry.id === play.dataset.favPlay);
+        if (!item) return;
+        try {
+          await playScape(item.__recipe.soundscape.id, {
+            bpm: item.__recipe.bpm,
+            density: item.__recipe.density,
+            key: item.__recipe.key,
+            progressionIndex: item.__recipe.progressionIndex,
+            seed: item.__recipe.seed,
+            context: `收藏 · ${item.name || item.__recipe.soundscape.name}`,
+          });
+        } catch (error) {
+          toast(error.message);
+        }
+        return;
+      }
+      const del = event.target.closest("[data-fav-del]");
+      if (del) await removeFavorite(del.dataset.favDel);
     });
   }
 
@@ -951,6 +1585,10 @@
     renderScapes();
     bind();
     syncTransport();
+
+    // 收藏不挡首屏：后端 /api/playlist 慢一点或没起来，页面也照常用。
+    // loadFavorites 自己吞异常，这里不用 await。
+    loadFavorites();
 
     try {
       app.catalog = await api("/api/soundscapes");

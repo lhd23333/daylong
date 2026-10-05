@@ -27,6 +27,8 @@
       <symbol id="i-check" viewBox="0 0 24 24"><path d="M5.7 12.3l4.2 4.2 8.4-8.9" /></symbol>
       <symbol id="i-note" viewBox="0 0 24 24"><circle cx="7.4" cy="17.3" r="2.5" /><circle cx="17.3" cy="15.3" r="2.5" /><path d="M9.9 17.3V7.3l9.9-2v10" /></symbol>
       <symbol id="i-moon" viewBox="0 0 24 24"><path d="M19.4 14.6A7.6 7.6 0 019.4 4.6a7.8 7.8 0 1010 10z" /></symbol>
+      <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.7l2.6 5.3 5.8.85-4.2 4.1 1 5.8-5.2-2.74-5.2 2.74 1-5.8-4.2-4.1 5.8-.85z" /></symbol>
+      <symbol id="i-star-filled" viewBox="0 0 24 24"><path d="M12 3.7l2.6 5.3 5.8.85-4.2 4.1 1 5.8-5.2-2.74-5.2 2.74 1-5.8-4.2-4.1 5.8-.85z" fill="currentColor" /></symbol>
     </svg>
 
     <div class="app">
@@ -195,46 +197,110 @@
         <!-- ══════════════ 休息 ══════════════ -->
         <section class="view" id="view-rest" aria-labelledby="player-title" hidden>
           <div class="player" id="player">
-            <p class="player-context" id="player-context">现在没有在放</p>
-            <h1 class="player-title" id="player-title" tabindex="-1">休息一下</h1>
-            <p class="player-blurb" id="player-blurb">从时间轴上点一个休息点，或者直接在下面挑一个音景。</p>
+            <!-- 粒子是背景层，单独一张画布。不能和光碟共用：粒子靠每帧半透明
+                 覆盖做出拖尾，同一个画布上半透明覆盖会把光碟也一起糊掉。 -->
+            <canvas class="particles" id="particles" aria-hidden="true"></canvas>
 
-            <canvas class="viz" id="viz" height="150" aria-hidden="true"></canvas>
+            <div class="player-inner">
+              <p class="player-context" id="player-context">现在没有在放</p>
+              <h1 class="player-title" id="player-title" tabindex="-1">休息一下</h1>
+              <p class="player-blurb" id="player-blurb">从时间轴上点一个休息点，或者直接在下面挑一个音景。</p>
 
-            <div class="transport">
-              <button type="button" class="play-btn" id="play-btn" aria-label="开始播放">
-                <svg class="icon" aria-hidden="true"><use href="#i-play" /></svg>
-              </button>
-              <div class="transport-meta" id="player-meta"></div>
-              <button type="button" class="ghost-btn" id="shuffle-btn" title="换一个调性和进行">
-                <svg class="icon" aria-hidden="true"><use href="#i-refresh" /></svg><span>换一段</span>
-              </button>
-            </div>
+              <!-- 光碟 + 外圈频谱。频谱绕成一圈而不是拉成一条：播放器中间本来
+                   就该有个东西在转，而一条 92px 的横条只占地方。绕成环之后它
+                   既是那个「在转的东西」，也仍然是真的频谱——读写的是同一个
+                   engine.getSpectrum()，dB 映射也沿用原来那套实测出来的参数。 -->
+              <div class="disc-stage" id="disc-stage">
+                <canvas class="disc" id="disc" width="640" height="640" aria-hidden="true"></canvas>
+                <div class="disc-readout" aria-hidden="true">
+                  <span class="disc-bpm" id="disc-bpm">–</span>
+                  <span class="disc-unit">BPM</span>
+                  <span class="disc-key" id="disc-key"></span>
+                </div>
+              </div>
 
-            <div class="dials player-dials">
-              <label class="dial" for="player-tempo">
-                <span class="dial-name">快慢</span>
-                <input type="range" id="player-tempo" min="40" max="140" step="1" value="80" />
-                <output class="dial-value" id="out-tempo">–</output>
-              </label>
-              <label class="dial" for="player-density">
-                <span class="dial-name">疏密</span>
-                <input type="range" id="player-density" min="0" max="100" step="1" value="45" />
-                <output class="dial-value" id="out-density">–</output>
-              </label>
-              <label class="dial" for="player-volume">
-                <span class="dial-name">音量</span>
-                <input type="range" id="player-volume" min="0" max="100" step="1" value="70" />
-                <output class="dial-value" id="out-volume">70</output>
-              </label>
+              <div class="transport">
+                <button type="button" class="play-btn" id="play-btn" aria-label="开始播放">
+                  <svg class="icon" aria-hidden="true"><use href="#i-play" /></svg>
+                </button>
+                <div class="transport-meta" id="player-meta"></div>
+                <div class="transport-actions">
+                  <button type="button" class="ghost-btn" id="shuffle-btn" title="换一个调性和进行">
+                    <svg class="icon" aria-hidden="true"><use href="#i-refresh" /></svg><span>换一段</span>
+                  </button>
+                  <button type="button" class="ghost-btn" id="fav-btn" title="把这一段存进收藏，之后可以反复听">
+                    <svg class="icon" aria-hidden="true"><use href="#i-star" /></svg><span id="fav-label">收藏</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="dials player-dials">
+                <label class="dial" for="player-tempo">
+                  <span class="dial-name">节拍</span>
+                  <input type="range" id="player-tempo" min="40" max="200" step="1" value="80" />
+                  <output class="dial-value" id="out-tempo">–</output>
+                </label>
+                <label class="dial" for="player-density">
+                  <span class="dial-name">节奏量</span>
+                  <input type="range" id="player-density" min="0" max="100" step="1" value="45" />
+                  <output class="dial-value" id="out-density">–</output>
+                </label>
+                <label class="dial" for="player-volume">
+                  <span class="dial-name">音量</span>
+                  <input type="range" id="player-volume" min="0" max="100" step="1" value="70" />
+                  <output class="dial-value" id="out-volume">70</output>
+                </label>
+              </div>
+              <!-- 超出推荐区间时的提示。不阻止拖动，只说明「这一段是为另一个
+                   速度写的」。推荐是方向，不是手铐。 -->
+              <p class="band-hint" id="band-hint" role="status" hidden></p>
             </div>
           </div>
+
+          <!-- ── 完全自定义 ──────────────────────────────────────
+               默认**展开**。预设已经够好，但「完全自由地搭配」正是这个产品
+               和普通播放器的分界，把分界藏在一次点击后面等于没做。真想收起
+               来的人自己点一下 summary——那是他的选择，不是我们的默认。
+               三条轴（音景 / 节拍 / 节奏量）各自独立，调性跟和声进行是另外
+               两个自由维度。 -->
+          <details class="panel tuning" id="tuning" open>
+            <summary>
+              <span>自己调这一段</span>
+              <small id="tune-summary">音景、节拍、节奏量完全解耦，怎么搭都行</small>
+            </summary>
+            <div class="details-body">
+              <div class="tune-row">
+                <span class="tune-label">调性</span>
+                <div class="chips wrap" id="key-chips" role="radiogroup" aria-label="调性"></div>
+              </div>
+              <div class="tune-row">
+                <span class="tune-label">和声进行</span>
+                <div class="chips wrap" id="progression-chips" role="radiogroup" aria-label="和声进行"></div>
+              </div>
+              <div class="tune-row">
+                <span class="tune-label">粒子</span>
+                <div class="chips wrap" id="driver-chips" role="radiogroup" aria-label="粒子风格"></div>
+              </div>
+              <p class="panel-foot" id="tune-hint">带下划线的是这个音景的推荐值，选别的也能放。</p>
+            </div>
+          </details>
 
           <div class="section-head">
             <h2>音景</h2>
             <span class="panel-note" id="library-note"></span>
           </div>
           <div class="scape-grid" id="scape-grid"></div>
+
+          <!-- ── 我的收藏 ────────────────────────────────────── -->
+          <div class="section-head">
+            <h2>我的收藏</h2>
+            <span class="panel-note" id="fav-note"></span>
+          </div>
+          <ul class="fav-list" id="fav-list"></ul>
+          <p class="empty-hint" id="fav-empty">
+            还没有收藏。放到喜欢的段落时点一下上面的「收藏」——存的是配方而不是音频文件，
+            所以随时能原样重现，也不占地方。
+          </p>
 
           <details class="panel more">
             <summary>
@@ -271,10 +337,35 @@
 
     <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
+    <!-- 「还有 5 分钟」提醒。挂在页面右下角，播放/忽略之后就消失；
+         它只在页面开着的时候会响——网页关掉没有后台能力，这一点在
+         使用说明里写明了，不假装自己是个常驻 App。 -->
+    <aside class="reminder" id="reminder" role="alert" aria-live="assertive" hidden>
+      <div class="reminder-head">
+        <span class="reminder-when" id="reminder-when">还有 5 分钟</span>
+        <button type="button" class="icon-btn" id="reminder-close" aria-label="先不管">
+          <svg class="icon" aria-hidden="true"><use href="#i-close" /></svg>
+        </button>
+      </div>
+      <p class="reminder-title" id="reminder-title"></p>
+      <p class="reminder-why" id="reminder-why"></p>
+      <div class="reminder-actions">
+        <button type="button" class="solid-btn" id="reminder-play">
+          <svg class="icon" aria-hidden="true"><use href="#i-play" /></svg>先听一段
+        </button>
+      </div>
+    </aside>
+
     <script src="/vendor/tone/Tone.min.js"></script>
     <script src="/js/theory.js"></script>
     <script src="/js/soundscapes.js"></script>
     <script src="/js/engine.js"></script>
+    <!-- 可视化的两层：features 把频谱归纳成标量，particles 只读标量。
+         分开是为了让粒子之外的视觉（比如外圈频谱）复用同一份分析结果，
+         而不必各自去解析原始 FFT。 -->
+    <script src="/js/features.js"></script>
+    <script src="/js/particles.js"></script>
+    <script src="/js/daymusic.js"></script>
     <script src="/app.js" defer></script>
   </body>
 </html>

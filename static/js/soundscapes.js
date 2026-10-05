@@ -1,15 +1,49 @@
 /*
  * 音景库 —— 程序化音乐的素材包。
  *
- * 一个「音景」不是一首固定的曲子，而是一套风格约束：调性、和声进行、
+ * 一个「音景」不是一首固定的曲子，而是一套气质约束：调性、和声进行、
  * 音色、律动方式。引擎每次从这里抽取一组参数实时演奏，所以同一音景
  * 听一小时也不会重复，但始终在同一种气质里。
  *
  * 和声进行用级数记号写（1maj7 / 5dom9 / 6min7 …），配合 keys 可搬到
  * 任意调上，这是「8 个音景 → 上千种组合」的来源。
+ *
+ * ── 三条轴是解耦的 ────────────────────────────────────────────
+ * 早先每个音景把速度区间写死成硬边界（`bpm: [58, 76]` 就意味着拖不出这个
+ * 范围），音景和速度实际被绑在一起。现在拆成三条彼此独立的轴：
+ *
+ *     音景（本文件的每一条）  ×  节拍（LIMITS.bpm 内任意值）  ×  节奏量（0–1）
+ *
+ * 音景上写着的那两个区间**降级为推荐值**——后端按状态从中挑一个起点，
+ * 界面上把它高亮出来，但用户可以拖到区间外，只要不越过 LIMITS 的全局
+ * 硬边界。理由：伴侣应用的核心是完全的自定义，硬夹住用户的手是反的；
+ * 但完全不给方向又会让人面对一堆滑杆不知道该往哪拖，所以留推荐、去强制。
+ *
+ * 于是下面 `bpm` / `density` 两个字段的语义是「推荐区间」而不是「合法
+ * 区间」。真正的合法区间在 LIMITS。
  */
 (() => {
   "use strict";
+
+  /**
+   * 全局硬边界。超出这里才算非法——推荐区间是软的，这两个是硬的。
+   *
+   * 节拍放到 40–200：原来各音景的区间大多落在 52–128 之间，合起来看还是
+   * 窄。40 约等于一分钟 40 拍（很慢的铺底），200 是急板，再往外就不太能
+   * 称之为「音乐」了，所以到这里为止。
+   */
+  const LIMITS = {
+    bpm: [40, 200],
+    density: [0, 1],
+  };
+
+  /**
+   * 可选调性。**必须与 `theory.js` 的 PITCH_CLASSES 逐字一致**——那边只认
+   * 升号写法（`C#` 而不是 `Db`），写错会在 keyRootMidi 里抛「未知调性」。
+   * 两份清单分居两个文件是有风险的，但 theory.js 是纯乐理层、不该知道
+   * 音景的存在，所以这里留一条注释守住同步。
+   */
+  const KEYS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
   // 复用的音色模板，避免每个音景重复一大段合成器参数。
   const TIMBRE = {
@@ -100,6 +134,7 @@
       scenes: ["sedentary", "any"],
       energy: ["低", "中低"],
       bpm: [58, 76],
+      density: [0.15, 0.4],
       keys: ["C", "F", "G", "D", "A#"],
       progressions: [
         ["1maj7", "5add9", "6min7", "4maj7"],
@@ -130,6 +165,7 @@
       scenes: ["sedentary"],
       energy: ["中低", "中"],
       bpm: [68, 88],
+      density: [0.4, 0.7],
       keys: ["F", "A#", "D#", "C", "G"],
       progressions: [
         ["2min9", "5dom9", "1maj9", "6min9"],
@@ -161,6 +197,7 @@
       scenes: ["walking"],
       energy: ["中低", "中"],
       bpm: [92, 112],
+      density: [0.45, 0.75],
       keys: ["G", "D", "C", "A", "E"],
       progressions: [
         ["1add9", "5sus4", "6min7", "4maj7"],
@@ -191,6 +228,7 @@
       scenes: ["any"],
       energy: ["低"],
       bpm: [52, 68],
+      density: [0.05, 0.3],
       keys: ["C", "D", "F", "A#"],
       progressions: [
         ["1maj9", "4maj9"],
@@ -220,6 +258,7 @@
       scenes: ["any"],
       energy: ["中", "中高"],
       bpm: [104, 126],
+      density: [0.55, 0.85],
       keys: ["D", "A", "E", "G", "C"],
       progressions: [
         ["1maj7", "5dom7", "6min7", "4maj7"],
@@ -250,6 +289,7 @@
       scenes: ["sedentary"],
       energy: ["低", "中低"],
       bpm: [62, 80],
+      density: [0.15, 0.4],
       keys: ["A", "D", "F", "G"],
       progressions: [
         ["6min9", "4maj7", "1maj7", "5sus2"],
@@ -279,6 +319,7 @@
       scenes: ["walking", "commute"],
       energy: ["中", "中高"],
       bpm: [108, 128],
+      density: [0.6, 0.9],
       keys: ["A", "D", "E", "F", "G"],
       progressions: [
         ["4maj7", "5dom9", "3min7", "6min9"],
@@ -309,6 +350,7 @@
       scenes: ["any"],
       energy: ["低"],
       bpm: [54, 70],
+      density: [0.1, 0.35],
       keys: ["C", "F", "A#", "D"],
       progressions: [
         ["1maj7", "4maj7", "6min7", "5sus4"],
@@ -331,38 +373,124 @@
 
   const BY_ID = new Map(SOUNDSCAPES.map((item) => [item.id, item]));
 
-  /** 音景目录里的可选速度档位数，用于「组合数」展示。 */
-  function tempoSteps(soundscape) {
-    return Math.max(1, Math.round(soundscape.bpm[1] - soundscape.bpm[0] + 1));
+  function clampTo(value, range) {
+    return Math.min(range[1], Math.max(range[0], value));
   }
 
+  /** 把任意数字夹进合法的节拍范围。非法输入（NaN/字符串）退回 null 交给调用方。 */
+  function clampBpm(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return null;
+    return clampTo(Math.round(number), LIMITS.bpm);
+  }
+
+  /** 同上，节奏量。 */
+  function clampDensity(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return null;
+    return clampTo(number, LIMITS.density);
+  }
+
+  /** 这个调名合法吗——挡住拼错的调性，免得在 keyRootMidi 里才炸。 */
+  function isValidKey(key) {
+    return KEYS.includes(String(key || "").toUpperCase());
+  }
+
+  /** 全局节拍档位数：40–200 共 161 档。 */
+  function tempoSteps() {
+    return LIMITS.bpm[1] - LIMITS.bpm[0] + 1;
+  }
+
+  /**
+   * 一个音景能展开出多少种组合：调性 × 和声进行 × 节拍档位。
+   *
+   * 这里刻意用**全局**节拍档位（161）而不是该音景的推荐区间——解耦之后
+   * 速度本来就能拖到推荐区间外，若还按推荐区间计数，等于在计数上偷偷把
+   * 解耦又收回去，那个数字会小看自己。
+   *
+   * 节奏量是连续量，没有「档位」可言，所以不参与计数；界面上单独说明。
+   */
   function combinationCount(soundscape) {
-    return soundscape.keys.length * soundscape.progressions.length * tempoSteps(soundscape);
+    return soundscape.keys.length * soundscape.progressions.length * tempoSteps();
   }
 
   /** 全库统计：音景数、和声进行总数、组合总数。用于界面上诚实地说清「程序库有多大」。 */
   function libraryStats() {
     const progressions = SOUNDSCAPES.reduce((sum, item) => sum + item.progressions.length, 0);
     const combinations = SOUNDSCAPES.reduce((sum, item) => sum + combinationCount(item), 0);
-    const tempos = new Set();
-    SOUNDSCAPES.forEach((item) => {
-      for (let bpm = item.bpm[0]; bpm <= item.bpm[1]; bpm += 1) tempos.add(bpm);
-    });
-    return { soundscapes: SOUNDSCAPES.length, progressions, combinations, tempos: tempos.size };
+    return {
+      soundscapes: SOUNDSCAPES.length,
+      progressions,
+      combinations,
+      tempos: tempoSteps(),
+      keys: KEYS.length,
+      bpm: [LIMITS.bpm[0], LIMITS.bpm[1]],
+    };
   }
 
   function get(id) {
     return BY_ID.get(String(id)) || null;
   }
 
-  /** 后端只给 id 和 BPM；这里补全成引擎能直接演奏的完整配方。 */
-  function resolve(id, { bpm, seed = 0, intensity = 0.5 } = {}) {
+  /** 某条轴的推荐区间，供界面高亮与「超出推荐」提示使用。 */
+  function recommendFor(id) {
     const soundscape = get(id) || SOUNDSCAPES[0];
-    const target = Number.isFinite(bpm)
-      ? Math.max(soundscape.bpm[0], Math.min(soundscape.bpm[1], Math.round(bpm)))
-      : Math.round((soundscape.bpm[0] + soundscape.bpm[1]) / 2);
-    return { soundscape, bpm: target, seed, intensity };
+    return { bpm: soundscape.bpm.slice(), density: soundscape.density.slice() };
   }
 
-  window.MCSoundscapes = { list: SOUNDSCAPES, get, resolve, libraryStats, combinationCount, timbres: TIMBRE };
+  /** 某个值是否落在推荐区间内。 */
+  function inRecommendation(id, axis, value) {
+    const band = recommendFor(id)[axis];
+    if (!band) return true;
+    const number = Number(value);
+    return Number.isFinite(number) && number >= band[0] && number <= band[1];
+  }
+
+  /**
+   * 后端只给 id / BPM / 节奏量；这里补全成引擎能直接演奏的完整配方。
+   *
+   * 三个入参的处理原则一致：**给了就用（只要不越全局硬边界），没给就取
+   * 推荐区间的中点**。`key` 与 `progressionIndex` 为 null 时交给引擎按
+   * 种子随机挑，这样同一条配方在不同休息点会落到不同调性上。
+   */
+  function resolve(
+    id,
+    { bpm, density, seed = 0, intensity = 0.5, key = null, progressionIndex = null } = {}
+  ) {
+    const soundscape = get(id) || SOUNDSCAPES[0];
+    const targetBpm =
+      clampBpm(bpm) ?? Math.round((soundscape.bpm[0] + soundscape.bpm[1]) / 2);
+    const targetDensity =
+      clampDensity(density) ?? (soundscape.density[0] + soundscape.density[1]) / 2;
+    const targetKey = isValidKey(key) ? String(key).toUpperCase() : null;
+    const targetProgression =
+      Number.isInteger(progressionIndex) && progressionIndex >= 0
+        ? progressionIndex % soundscape.progressions.length
+        : null;
+    return {
+      soundscape,
+      bpm: targetBpm,
+      density: targetDensity,
+      seed,
+      intensity,
+      key: targetKey,
+      progressionIndex: targetProgression,
+    };
+  }
+
+  window.MCSoundscapes = {
+    list: SOUNDSCAPES,
+    get,
+    resolve,
+    recommendFor,
+    inRecommendation,
+    libraryStats,
+    combinationCount,
+    clampBpm,
+    clampDensity,
+    isValidKey,
+    LIMITS,
+    KEYS,
+    timbres: TIMBRE,
+  };
 })();

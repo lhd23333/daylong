@@ -23,13 +23,14 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from music_companion.ai_client import AIRecommender
 from music_companion.audio_generator import AudioGenerationError, generate_music_wav
-from music_companion.music_api import ElevenLabsMusicClient, MusicAPIError
+from music_companion.music_api import MusicAPIError, create_music_client
 from music_companion.recommender import RecommendationError, recommend
 from music_companion.calendar_model import CalendarEvent, EVENT_STATUSES, find_conflicts, validate_events
 from music_companion.companion import compose_care_with_ai
 from music_companion.day_plan import build_day, day_soundscape_hint, hydrate_timeline
 from music_companion.ics_parser import parse_ics
 from music_companion.planner import BreakPlanItem, plan_breaks
+from music_companion.playlist import PlaylistStore
 from music_companion.soundscape import soundscape_catalog
 from music_companion.state import StatusSnapshot, parse_status_import
 
@@ -85,18 +86,28 @@ class MusicCompanionHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"state": self.server.latest_state.to_dict() if self.server.latest_state else None})
             return
         if parsed.path == "/api/health":
+            client = self.server.music_client
             self._send_json(
                 200,
                 {
                     "ok": True,
                     "mode": "ai" if self.server.ai_client.is_configured() else "local",
+                    # 音频生成永远为真：本地合成器不需要任何外部依赖。
                     "audio_generation": True,
+                    # 远端通路是可选加成，单独报，前端据此决定要不要显示
+                    # 「用 AI 生成一段」那个入口。
+                    "remote_music": client.health() if client is not None else {"configured": False},
                 },
             )
             return
         if parsed.path == "/api/soundscapes":
             # 目录本身就是一个数组（前端按 id 校验并展示）。
             self._send_json(200, soundscape_catalog())
+            return
+        if parsed.path == "/api/playlist":
+            # 收藏。盘上存的是配方（音景/节拍/节奏量/调性/进行/种子），不是音频，
+            # 所以这里返回的就是几条能直接回放的小 JSON。
+            self._send_json(200, {"items": self.server.playlist.list_entries()})
             return
         self._serve_static(parsed.path)
 
@@ -116,6 +127,9 @@ class MusicCompanionHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/day/break-status":
             self._handle_break_status()
+            return
+        if parsed.path == "/api/playlist":
+            self._handle_playlist_add()
             return
         if parsed.path != "/api/recommend":
             self._send_json(404, {"error": "接口不存在"})
@@ -145,6 +159,14 @@ class MusicCompanionHandler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:
         parsed = urlparse(self.path)
         prefix = "/api/calendar/events/"
+        playlist_prefix = "/api/playlist/"
+        if parsed.path.startswith(playlist_prefix):
+            entry_id = unquote(parsed.path[len(playlist_prefix):])
+            if not entry_id or self.server.playlist.remove(entry_id) is False:
+                self._send_json(404, {"error": "收藏不存在"})
+                return
+            self._send_json(200, {"deleted": entry_id})
+            return
         if not parsed.path.startswith(prefix):
             self._send_json(404, {"error": "接口不存在"})
             return
@@ -156,6 +178,28 @@ class MusicCompanionHandler(BaseHTTPRequestHandler):
             return
         self.server.persist_events()
         self._send_json(200, {"deleted": event_id})
+
+    def _handle_playlist_add(self) -> None:
+        """收藏一段配方。
+
+        200 还是 201 有讲究：配方 id 是那六个字段的纯函数，同一段音乐重复收藏
+        命中已有条目（``created=False``），这时回 200 而不是 201——前端据此提示
+        「已经在收藏里了」。越界或超长一律走 ValueError → 400，**不夹紧**：
+        静默改数值会让存下来的和用户听到的不是同一段。
+        """
+        try:
+            payload = self._read_json_body()
+            entry, created = self.server.playlist.add(payload)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+            return
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            self._send_json(400, {"error": f"JSON 格式错误：{exc}"})
+            return
+        except Exception as exc:  # noqa: BLE001 - JSON API boundary
+            self._send_json(500, {"error": f"服务器内部错误：{type(exc).__name__}"})
+            return
+        self._send_json(201 if created else 200, {"item": entry, "duplicate": not created})
 
     def _content_length(self) -> int:
         raw_length = self.headers.get("Content-Length", "")
@@ -418,6 +462,10 @@ class MusicCompanionHandler(BaseHTTPRequestHandler):
             }
             try:
                 client = self.server.music_client
+                if client is None:
+                    raise MusicAPIError(
+                        "远端音乐通路没配置好（检查 .env 里的 MUSIC_PROVIDER 和对应的 KEY）"
+                    )
                 prompt = client.build_prompt(recommendation)
                 generated = client.generate(
                     prompt,
@@ -540,12 +588,22 @@ class MusicCompanionServer(ThreadingHTTPServer):
     def __init__(self, address: tuple[str, int], data_dir: str | Path | None = None) -> None:
         super().__init__(address, MusicCompanionHandler)
         self.ai_client = AIRecommender()
-        self.music_client = ElevenLabsMusicClient()
+        # 远端音乐通路按 MUSIC_PROVIDER 选（elevenlabs / tempolor）。选不出来
+        # 不该拦住整个服务：本地合成器才是主线，远端只是可选加成。
+        try:
+            self.music_client = create_music_client()
+        except Exception as exc:  # noqa: BLE001 - 配置错误不该让服务起不来
+            print(f"[server] 远端音乐通路未启用：{exc}")
+            self.music_client = None
         self.data_dir = Path(data_dir) if data_dir is not None else DATA_DIR
         self.events_path = self.data_dir / "calendar_events.json"
         self.state_path = self.data_dir / "latest_state.json"
         self.plans_path = self.data_dir / "plans.json"
         self._data_lock = threading.RLock()
+        # 收藏夹。PlaylistStore 在构造时把整表读进内存、每次改动整表重写，
+        # **整个进程只能有一个实例**（每请求 new 一个会互相覆盖），所以挂在
+        # server 上。路径跟 data_dir 走，测试用临时目录时才不会碰真实数据。
+        self.playlist = PlaylistStore(self.data_dir / "playlist.json")
         raw_events = _read_json(self.events_path, [])
         self.calendar_events = []
         if isinstance(raw_events, list):
