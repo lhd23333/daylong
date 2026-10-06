@@ -3,8 +3,12 @@
 * text=auto
 
 # 批处理文件必须保持 CRLF，否则在 Windows 上会被 cmd 当成一条长命令执行。
-# （目前 .bat 在上一级目录，不在此仓库内；留这条是防止以后移进来踩坑。）
 *.bat text eol=crlf
+
+# 反过来：shell 脚本必须始终是 LF。若放任 * text=auto 的默认行为，在 Windows 上
+# 检出会变成 CRLF，那样的 一键启动朝夕.command 打进发布包发到 Mac 上会直接报错。
+*.command text eol=lf
+*.sh text eol=lf
 
 # 二进制文件不做换行转换，否则图片会被改坏。
 *.png binary

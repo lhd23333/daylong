@@ -11,9 +11,9 @@ __pycache__/
 data/
 
 # ── 过程产物 ─────────────────────────────────────────
-# tmp/ 是截图探针与一次性脚本（约 4 MB），.playwright-cli/ 是浏览器缓存。
+# dist/ 是打包产物与自验脚本的截图落点，.playwright-cli/ 是浏览器缓存。
 # 都不参与交付，删掉也不影响运行。
-tmp/
+dist/
 .playwright-cli/
 screenshots/*.png
 
