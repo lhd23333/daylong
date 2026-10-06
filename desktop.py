@@ -38,6 +38,12 @@ LOG_PATH = LOG_DIR / "desktop.log"
 STDIO_PATH = LOG_DIR / "desktop.out.log"
 STORAGE_PATH = LOG_DIR / "webview"
 
+# 标题栏与窗口边框刷成页面的暖纸色，和内容区连成一片——视觉上等于把那条蓝边
+# 「取消」了，同时保住最小化 / 最大化 / 关闭三个原生按钮和贴靠、系统菜单这些
+# 系统行为。文字色给深褐（页面正文同色），否则跟随系统深色主题时会白字白底。
+CAPTION_RGB = 0xF5F2EA
+CAPTION_TEXT_RGB = 0x1E1C19
+
 # 单实例互斥体的句柄必须活到进程结束，被回收就等于放开了锁。
 _instance_guard: object = None
 
@@ -136,6 +142,42 @@ def _focus_existing_window() -> bool:
         return False
 
 
+def _colorref(rgb: int) -> int:
+    """DWM 要的颜色是 0x00BBGGRR，不是常见的 0xRRGGBB。"""
+    red, green, blue = (rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF
+    return (blue << 16) | (green << 8) | red
+
+
+def _apply_caption_color(window) -> None:
+    """把系统标题栏刷成暖纸色。
+
+    走 DWM 的 DWMWA_CAPTION_COLOR 一族，只在 Windows 11（build 22000+）生效；
+    更老的系统上这几个属性不存在，调用会返回非 0，忽略即可——标题栏保持系统
+    默认外观，不影响使用，所以这里不检查返回值也不报错。
+
+    参数名必须是 ``window``：pywebview 的 Event 按参数名决定要不要把窗口对象
+    传进来。
+    """
+    if os.name != "nt":
+        return
+    try:
+        hwnd = window.native.Handle.ToInt32()
+    except Exception:
+        return
+    try:
+        dwmapi = ctypes.WinDLL("dwmapi")
+    except OSError:
+        return
+    for attribute, rgb in (
+        (34, CAPTION_RGB),       # DWMWA_BORDER_COLOR
+        (35, CAPTION_RGB),       # DWMWA_CAPTION_COLOR
+        (36, CAPTION_TEXT_RGB),  # DWMWA_TEXT_COLOR
+    ):
+        value = ctypes.c_int(_colorref(rgb))
+        dwmapi.DwmSetWindowAttribute(hwnd, attribute, ctypes.byref(value), ctypes.sizeof(value))
+    logger.info("标题栏已刷成页面同色 #%06X", CAPTION_RGB)
+
+
 def _is_zhaoxi_on(port: int) -> bool:
     """端口上已经有服务了，判断它是不是朝夕。"""
     try:
@@ -194,7 +236,7 @@ def main() -> int:
     server_thread.start()
     logger.info("本地服务已就绪：http://%s:%d", HOST, port)
 
-    webview.create_window(
+    window = webview.create_window(
         WINDOW_TITLE,
         f"http://{HOST}:{port}/",
         width=1280,
@@ -207,6 +249,8 @@ def main() -> int:
         background_color="#f5f2ea",
         text_select=True,
     )
+    # 窗口显示后才有 HWND，着色挂在这里（见 _apply_caption_color）。
+    window.events.shown += _apply_caption_color
 
     try:
         webview.start(
