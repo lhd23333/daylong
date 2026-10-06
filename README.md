@@ -188,6 +188,32 @@ drums, seed, name}`。于是"收藏一首好听的曲子"不需要保存任何�
 
 ## 启动
 
+同一份源码、同一个服务，两种跑法：
+
+- **桌面窗口版**（Windows）——双击仓库根目录的 `朝夕桌面版.cmd`，开出一个独立的
+  应用窗口：有标题栏、有任务栏图标、没有地址栏，不是浏览器标签页。
+- **浏览器版**（全平台，零依赖）——双击 `一键启动朝夕.bat`（Windows）或
+  `一键启动朝夕.command`（macOS / Linux），在浏览器里打开。
+
+### 桌面窗口版
+
+窗口壳是 `desktop.py`，只做四件事：单实例锁、把 `MusicCompanionServer` 放在后台
+线程、开一个 WebView2 窗口、关窗后收干净。业务代码一行都不在里面——改 `server.py`
+或 `static/` 照常生效（改 Python 重启窗口，改前端刷新窗口），跑的就是仓库里的最新
+源码，不需要打包。窗口用 Windows 自带的 WebView2 运行时，不捆绑 Chromium。
+
+它多一个可选依赖 `pywebview`（见 `requirements-desktop.txt`）。**这没有动摇核心的
+零依赖**：`server.py` 仍然是纯标准库，删掉 `.venv` 就退回浏览器版。
+
+- 首次双击会自动建 `.venv` 并装依赖（需要联网，约 1-2 分钟），之后即时启动。
+- 再双击一次不会开出第二个窗口，而是把已有的窗口提到前台。
+- 端口固定在 8000 而不是随机分配：前端偏好存在 `localStorage`，而它按来源
+  （含端口）隔离，换端口等于换一份存储，用户的设置会凭空消失。
+- 窗口进程没有控制台，出问题看 `data/desktop.log`。
+- 桌面快捷方式：目标指向 `朝夕桌面版.cmd`，图标用 `assets/朝夕.ico`。
+
+### 浏览器版
+
 不需要 Flask、Node 包或任何第三方 Python 库，只要有 Python 3.10+。
 
 Windows 可以直接双击仓库根目录的 `一键启动朝夕.bat`，脚本会自动定位项目、
@@ -197,7 +223,7 @@ macOS / Linux 双击同一个 `一键启动朝夕.command`：它会先等服务�
 重复双击不会起第二份；挑一个 3.10+ 的 Python，找不到合格的 Python 时会直接告诉你去哪装。
 系统拦下首次打开时，到「系统设置 → 隐私与安全性 → 安全性」里点「仍要打开」
 （macOS 14 及更早也可以右键 → 打开）；提示没有执行权限时，在终端里对它执行一次 `chmod +x`。
-两个启动器都认 `ZHAOXI_PORT` 环境变量，用它换端口。
+三个入口都认 `ZHAOXI_PORT` 环境变量，用它换端口。
 
 页面不能双击 `index.html` 直接看：它要向本机服务请求 `/api/*`，任何系统上都得先把
 服务跑起来。手动启动在哪个系统上都一样：
@@ -330,9 +356,13 @@ python tools/test_api.py
 ```text
 daylong/                          # 中文名「朝夕 · 陪你过完这一天」
 ├── LICENSE                       # MIT
-├── server.py                     # 标准库 HTTP 服务 + JSON API + 静态文件
-├── 一键启动朝夕.bat               # Windows 启动器（含免安装版内置运行时探测）
+├── server.py                     # 标准库 HTTP 服务 + JSON API + 静态文件（零依赖核心）
+├── desktop.py                    # 桌面窗口版入口（可选壳：单实例 + WebView2 窗口）
+├── 朝夕桌面版.cmd                 # Windows 桌面版启动器（源码直跑，首次自动建环境）
+├── 一键启动朝夕.bat               # Windows 浏览器版启动器（含免安装版内置运行时探测）
 ├── 一键启动朝夕.command           # macOS / Linux 启动器（LF 换行，需 0755）
+├── requirements-desktop.txt      # 桌面窗口版的依赖（核心不用）
+├── assets/朝夕.ico               # 窗口与快捷方式图标（tools/make-icon.py 生成）
 ├── music_companion/
 │   ├── day_plan.py               # 一天的时间轴编排：休息点 + 统计 + 时长
 │   ├── soundscape.py             # 18 个音景目录、打分挑选、BPM 计算
@@ -364,6 +394,8 @@ daylong/                          # 中文名「朝夕 · 陪你过完这一天�
 │   └── vendor/tone/              # Tone.js 15.1.22（MIT，随包提供）
 ├── tests/                        # 单元测试（228 个用例）
 ├── tools/                        # 打包、自验与诊断脚本（见上「自己出发布包」）
+│   ├── setup-desktop.ps1         # 桌面窗口版：建 .venv 并装依赖（首次双击 .cmd 时自动调）
+│   ├── make-icon.py              # 按 favicon.svg 的几何重绘出 assets/朝夕.ico
 │   └── test_api.py               # AI 接口连通性诊断
 ├── docs/                         # 设计与实施计划（历史记录）
 ├── data/                         # 本机数据目录（收藏配方等，已在 .gitignore 里）
@@ -430,6 +462,8 @@ daylong/                          # 中文名「朝夕 · 陪你过完这一天�
 - 频谱可视化只画到约 1 kHz 以上的一段（实测再往上已经低于噪声底），是呈现上的
   取舍，不是完整频谱。
 - 服务器仅供本地开发与演示，没有鉴权、限流和 TLS。
+- 桌面窗口版只在 Windows 上验证过（走系统 WebView2）。pywebview 在 macOS 上走
+  Cocoa/WebKit、Linux 上走 GTK，入口是同一个 `desktop.py`，但这两条路没有实机验证。
 - 实测环境是 Windows 11 + Edge（Windows 免安装版的完整启动路径——自带运行时启动、
   重复双击、运行时损坏回退本机、无 Python 提示——也在这台机器上实机验证过）。
   macOS / Safari 没有实机验证：服务端只用标准库、Tone.js 随包，预期能跑，但 Safari
@@ -439,7 +473,9 @@ daylong/                          # 中文名「朝夕 · 陪你过完这一天�
 
 ## 第三方
 
-服务端零依赖。浏览器端随包提供 Tone.js 15.1.22（MIT）。`static/js/features.js` 与
+服务端零依赖（`server.py` 只用标准库）。桌面窗口版额外用 pywebview（BSD-3-Clause，
+Windows 后端是 pythonnet + 系统自带的 WebView2 运行时），它只属于可选的外壳层，
+不参与服务端。浏览器端随包提供 Tone.js 15.1.22（MIT）。`static/js/features.js` 与
 `static/js/particles.js` 的音频特征分层思路借鉴了 Audio Shader Studio 一类项目，
 **只借鉴架构、没有复制任何第三方代码**。完整来源、版本与许可证见
 `THIRD_PARTY_NOTICES.md`。

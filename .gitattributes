@@ -4,6 +4,7 @@
 
 # 批处理文件必须保持 CRLF，否则在 Windows 上会被 cmd 当成一条长命令执行。
 *.bat text eol=crlf
+*.cmd text eol=crlf
 
 # 反过来：shell 脚本必须始终是 LF。若放任 * text=auto 的默认行为，在 Windows 上
 # 检出会变成 CRLF，那样的 一键启动朝夕.command 打进发布包发到 Mac 上会直接报错。

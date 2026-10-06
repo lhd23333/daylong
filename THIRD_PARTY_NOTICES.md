@@ -3,6 +3,9 @@
 本项目的**服务端只用 Python 标准库**，没有任何 pip 依赖。浏览器端为了离线可用，
 把用到的库固定版本放在 `static/vendor/` 下，不依赖运行时 CDN。
 
+桌面窗口版（`desktop.py`）另有一个**可选**的 pip 依赖 pywebview，见下；不装它时
+服务端与整个 `music_companion/` 照常以纯标准库运行。
+
 ## Tone.js（运行时使用）
 
 - Repository: https://github.com/Tonejs/Tone.js
@@ -12,6 +15,34 @@
 - 用途：`static/js/engine.js` 用它搭建 Web Audio 图（PolySynth / FMSynth / AMSynth /
   MonoSynth / MembraneSynth / NoiseSynth + Filter / Chorus / Reverb / FeedbackDelay /
   Limiter / Meter / Analyser），在休息点实时生成音乐。
+
+## pywebview 6.2.1（桌面窗口版使用，可选）
+
+- Repository: https://github.com/r0x0r/pywebview
+- Version: 6.2.1（`requirements-desktop.txt` 固定）
+- License: BSD-3-Clause
+- Local files: `desktop.py`（唯一使用方）、`requirements-desktop.txt`
+- 用途：开一个原生窗口承载 `server.py` 提供的页面。Windows 后端是 pythonnet +
+  **系统自带的 WebView2 运行时**（不捆绑 Chromium）；macOS 走 Cocoa/WebKit，
+  Linux 走 GTK/WebKit2。
+- **它只属于桌面外壳，不参与服务端**：不装 pywebview 时，`server.py` 与整个
+  `music_companion/` 照常以纯标准库运行（浏览器版入口），桌面版只是可选的一层。
+
+安装时自动带入的依赖链（名称 · 版本 · 许可证，取自各自包内元数据）：
+
+| 包 | 版本 | 许可证 |
+| --- | --- | --- |
+| pythonnet | 3.2.0 | MIT |
+| clr_loader | 0.3.1 | MIT |
+| cffi | 2.1.1 | MIT-0 |
+| pycparser | 3.0 | BSD-3-Clause |
+| bottle | 0.13.4 | MIT |
+| proxy_tools | 0.1.0 | MIT |
+| typing_extensions | 4.16.0 | PSF-2.0 |
+
+`requirements-desktop.txt` 里另有 Pillow（MIT-CMU），只给 `tools/make-icon.py`
+生成 `assets/朝夕.ico` 用，**运行时不加载**——不想装它可以删掉这一行，图标已经
+生成好并提交在仓库里。
 
 ## CPython 3.12.15（随各免安装版分发，不在源码仓库与标准包里）
 

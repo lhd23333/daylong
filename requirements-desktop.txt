@@ -1,0 +1,8 @@
+# 「朝夕桌面版」的依赖（desktop.py）。核心服务器 server.py 不用这些，仍然只
+# 依赖标准库——桌面窗口只是可选的一层壳，不改变「零依赖也能跑」这件事。
+
+# 独立桌面窗口；Windows 走系统自带的 WebView2 运行时，不捆绑 Chromium。
+pywebview==6.2.1
+
+# 只供 tools/make-icon.py 生成 assets/朝夕.ico 用，运行时不加载。
+pillow
