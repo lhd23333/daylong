@@ -18,16 +18,22 @@
 - 来源：python-build-standalone（astral-sh），release tag `20261003`，变体
   `install_only_stripped`：macOS 的 aarch64 / x86_64 各一份，Windows 的 x86_64 一份
 - Repository: https://github.com/astral-sh/python-build-standalone
+  下载地址形如
+  `https://github.com/astral-sh/python-build-standalone/releases/download/20261003/cpython-3.12.15_20261003-<triple>-install_only_stripped.tar.gz`
+  （`<triple>` 取 `aarch64-apple-darwin` / `x86_64-apple-darwin` / `x86_64-pc-windows-msvc`）
 - License: PSF License（包内 `lib/python3.12/LICENSE.txt` 原样保留）
 - 校验：下载后核对 SHA256 与官方发布页一致（macOS aarch64
   `ad8d0c637c0a36b967b310e2c07254f4d2ca8cabaa7699e55ed6290aceb481a2`，macOS x86_64
   `562c30864ece2cb1d3e0ad66a1acd498611a47e5a10ce81b99158bef1ccbd355`，Windows x86_64
   `6fba7f2ae506facf41d457ea8293c7497910a675c69a4e954875169410a50402`）
 - 用途：在各免安装版 zip 的 `python-runtime/` 下（`macos-arm64` / `macos-x86_64` /
-  `windows-x86_64`），给没装 Python 的机器免安装运行。打包时分别按
-  `tmp/mac-runtime/prune.txt` 与 `tmp/win-runtime/prune.txt` 裁掉与本项目无关的组件
-  （Tcl/Tk、pip、idlelib 等），并逐个校验解释器二进制的文件头与架构
-  （`bin/python3.12` 是 64 位 Mach-O 且架构与目录名一致；`python.exe` 是 x86_64 PE）。
+  `windows-x86_64`），给没装 Python 的机器免安装运行。打包时按两个 `prune.txt` 清单
+  裁掉与本项目无关的组件（Tcl/Tk、pip、idlelib 等），并逐个校验解释器二进制的文件头与
+  架构（`bin/python3.12` 是 64 位 Mach-O 且架构与目录名一致；`python.exe` 是 x86_64 PE）。
+
+  **这三个 tar 与两份 `prune.txt` 不随本仓库分发**（合计约 68 MB，且是官方原始发布物、
+  可随时按上面的地址重新下载）。`tools/pack-submit.ps1` 通过 `-RuntimeDir` 参数指向它们
+  所在的目录；默认值见该脚本头部注释。
 
 ## 音频可视化的两层：只借鉴架构思路，未使用第三方代码
 

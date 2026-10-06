@@ -1,5 +1,9 @@
 # 朝夕 · 陪你过完这一天
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Server dependencies: none](https://img.shields.io/badge/server--deps-none-brightgreen.svg)](#为什么这样设计)
+
 一个跑在本机的陪伴型应用。把一天的日程放进去，它会替你算出**该在什么时候休息**、
 写一句话**问候你今天的状态**，并在休息的那一刻**当场生成一段适合你的音乐**。
 
@@ -186,33 +190,21 @@ drums, seed, name}`。于是"收藏一首好听的曲子"不需要保存任何�
 
 不需要 Flask、Node 包或任何第三方 Python 库，只要有 Python 3.10+。
 
-Windows 可以直接双击项目提交目录里的 `一键启动朝夕.bat`，脚本会自动定位项目、
+Windows 可以直接双击仓库根目录的 `一键启动朝夕.bat`，脚本会自动定位项目、
 检查 Python、启动服务并打开浏览器。
 
-macOS / Linux 双击同一目录里的 `一键启动朝夕.command`：它会先等服务就绪再打开浏览器，
+macOS / Linux 双击同一个 `一键启动朝夕.command`：它会先等服务就绪再打开浏览器，
 重复双击不会起第二份；挑一个 3.10+ 的 Python，找不到合格的 Python 时会直接告诉你去哪装。
 系统拦下首次打开时，到「系统设置 → 隐私与安全性 → 安全性」里点「仍要打开」
 （macOS 14 及更早也可以右键 → 打开）；提示没有执行权限时，在终端里对它执行一次 `chmod +x`。
-
-Mac 不想装 Python，就用提交目录里的 **`朝夕-陪你过完这一天-Mac免安装版-<日期>.zip`**：
-包里自带两份 Mac 版 Python 3.12（Apple 芯片 / Intel 各一份，来自 python-build-standalone），
-解压后双击同一个 `一键启动朝夕.command` 即可——启动器优先用包里自带的解释器，自带的不
-能用时自动退回本机已装的。标准包里没有 `python-runtime/` 文件夹，需要本机 Python 3.10+。
-首次打开的放行步骤、终端兜底和常见问题都写在包里的 `Mac用户先看这里.txt`。
-
-Windows 不想装 Python，同理用 **`朝夕-陪你过完这一天-Windows免安装版-<日期>.zip`**：
-包里自带 Windows 版 Python 3.12（x86_64，来自 python-build-standalone），解压后双击同一个
-`一键启动朝夕.bat`——启动器优先用包里自带的解释器，自带的不能用时自动退回本机已装的。
-首次被 SmartScreen 拦下时点「更多信息 → 仍要运行」，细节见包里的 `Windows用户先看这里.txt`。
-
-只允许交一个文件时用 **`朝夕-陪你过完这一天-全平台免安装版-<日期>.zip`**：内容是两个
-免安装版的并集（Mac 与 Windows 各自带一份 Python），双平台都能开箱即用。
+两个启动器都认 `ZHAOXI_PORT` 环境变量，用它换端口。
 
 页面不能双击 `index.html` 直接看：它要向本机服务请求 `/api/*`，任何系统上都得先把
 服务跑起来。手动启动在哪个系统上都一样：
 
 ```bash
-cd 项目源代码
+git clone https://github.com/lhd23333/daylong.git
+cd daylong
 python3 server.py
 ```
 
@@ -227,6 +219,20 @@ python -m unittest discover -s tests
 
 > `tests/` 目录没有 `__init__.py`，所以**不要**加 `-t .`，否则会报
 > `Start directory is not importable`。
+
+### 自己出发布包
+
+`tools/pack-submit.ps1` 是打包脚本，一步产出标准包与各免安装版 zip；`tools/zip_tree.py`
+负责写 zip 并回读校验 CRC、条目数与 Unix 权限位（`.command` 置 0755、中文名带 UTF-8 标志、
+路径一律正斜杠）。**仓库里不带 Python 运行时**——免安装版用的 CPython 3.12.15 来自
+python-build-standalone，release tag、三个 SHA256 与裁剪清单都记在 `THIRD_PARTY_NOTICES.md`，
+需要时按那份文档自行下载。
+
+`tools/` 下另有一组自验脚本：`smoke-full.cjs`（浏览器全量冒烟）、`smoke-reminder.cjs`
+（提醒链路）、`shot-views.cjs` / `shots-deliverable.cjs`（版面与交付截图）、
+`check-assets.cjs`（资源完整性）、`_probe-accept.cjs`（演奏连续性六相位）、
+`_probe-route.cjs`（声音路线连播）、`_probe-ai-settings.cjs`（连接 AI 面板）。
+它们需要本机有 Node 与 Playwright，不属于零依赖的运行路径。
 
 ## 连接 AI（可选）
 
@@ -316,14 +322,17 @@ python tools/test_api.py
 ```
 
 **密钥只放在本机（`.env` 或页面上填的 `data/ai_settings.json`），不要写进前端代码、
-截图或提交材料。** 两者都在 `.gitignore` 中，`.env.example` 里只有字段名，`data/`
-目录不随提交包发出（打包脚本显式排除）。页面上最多只回显密钥尾 4 位。
+提交进仓库，或出现在截图里。** 两者都在 `.gitignore` 中，`.env.example` 里只有字段名，
+`data/` 整个目录也不入库。页面上最多只回显密钥尾 4 位。
 
 ## 项目结构
 
 ```text
-项目源代码/
+daylong/                          # 中文名「朝夕 · 陪你过完这一天」
+├── LICENSE                       # MIT
 ├── server.py                     # 标准库 HTTP 服务 + JSON API + 静态文件
+├── 一键启动朝夕.bat               # Windows 启动器（含免安装版内置运行时探测）
+├── 一键启动朝夕.command           # macOS / Linux 启动器（LF 换行，需 0755）
 ├── music_companion/
 │   ├── day_plan.py               # 一天的时间轴编排：休息点 + 统计 + 时长
 │   ├── soundscape.py             # 18 个音景目录、打分挑选、BPM 计算
@@ -354,7 +363,8 @@ python tools/test_api.py
 │   ├── js/dayqueue.js            # 整天节目单：事件音乐 + 休息音景串成连播（纯逻辑）
 │   └── vendor/tone/              # Tone.js 15.1.22（MIT，随包提供）
 ├── tests/                        # 单元测试（228 个用例）
-├── tools/test_api.py             # AI 接口连通性诊断
+├── tools/                        # 打包、自验与诊断脚本（见上「自己出发布包」）
+│   └── test_api.py               # AI 接口连通性诊断
 ├── docs/                         # 设计与实施计划（历史记录）
 ├── data/                         # 本机数据目录（收藏配方等，已在 .gitignore 里）
 ├── .env.example                  # AI 配置示例
@@ -434,12 +444,13 @@ python tools/test_api.py
 **只借鉴架构、没有复制任何第三方代码**。完整来源、版本与许可证见
 `THIRD_PARTY_NOTICES.md`。
 
-## 比赛交付材料
+## 许可证
 
-按赛道一「AI 原点：解决今天的问题」准备：
+以 **MIT License** 发布，全文见 [`LICENSE`](LICENSE)——可以自由使用、修改、分发，包括商用，
+只需保留版权声明。随包分发的 Tone.js 同为 MIT，来源、版本与许可证见 `THIRD_PARTY_NOTICES.md`。
 
-- 创作说明：`static/assets/创作说明-赛道一.md`
-- 60 秒演示脚本：`static/assets/60秒演示脚本-赛道一.md`
-- 评审对齐与提交清单：`static/assets/评审对齐与提交清单.md`
+这是一个个人作品，Issue 与 Pull Request 都欢迎。但请把它当"可以直接拿去改的东西"，
+而不是需要长期兼容承诺的基础设施：接口会随实际需要变动，不保证向后兼容。
 
-比赛要求来自项目资料中的官方活动 PDF，提交前请再次核对通道、队伍信息与截止时间。
+代码提交前请跑一遍 `python -m unittest discover -s tests`，并确认没有把 `.env` 或
+`data/` 下的本机数据带进提交。
